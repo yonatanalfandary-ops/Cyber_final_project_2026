@@ -125,6 +125,21 @@ class RentalServer:
                     else:
                         response = {"status": "DENIED", "message": "Bad Password"}
 
+                # CASE 5: Get Active Renters (For Face-First Login)
+                elif action == "FETCH_ACTIVE_USERS":
+                    # In a real app, we would verify the station_id here
+                    active_users = self.db.get_active_renters()
+                    response = {"status": "SUCCESS", "users": active_users}
+
+                # CASE 6: Live Time Deduction
+                elif action == "DEDUCT_TIME":
+                    username = request.get("username")
+                    seconds = request.get("seconds")
+                    self.db.deduct_user_time(username, seconds)
+                    # We don't necessarily need to send a response for every heartbeat
+                    # to keep traffic low, but let's send a simple OK for now.
+                    response = {"status": "SUCCESS"}
+
                 self.send_json(client_socket, response)
 
 

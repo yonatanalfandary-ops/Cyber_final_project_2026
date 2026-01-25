@@ -1,138 +1,212 @@
 import cv2
 import numpy as np
 import time
+import face_recognition
 from network_client import NetworkClient
 from lock_screen import LockScreen
 from login_window import LoginWindow
-import face_recognition
 
-# --- CONFIGURATION ---
+# CONFIG
 STATION_ID = "STATION_01"
-SERVER_IP = "127.0.0.1"  # Change to Server IP if different PC
+SERVER_IP = "127.0.0.1"
+SYNC_INTERVAL = 5  # Update DB every 5 seconds
 
 
-class FaceAuthenticator:
-    """Manages the ONE face we are looking for."""
-
+class MainClient:
     def __init__(self):
-        self.target_encoding = None
-        self.target_name = None
+        self.net = NetworkClient(SERVER_IP)
+        self.locker = None
+        self.current_user = None
 
-    def load_user(self, user_data):
-        self.target_name = user_data['username']
-        # The server sends a list of lists (multi-angle), we take the first one for now
-        # or we could compare against all of them for better accuracy.
-        if user_data.get('face_encoding'):
-            # Convert list back to numpy array
-            encodings = user_data['face_encoding']
-            # Flatten to a list of numpy arrays
-            self.target_encoding = [np.array(e) for e in encodings]
-            print(f"🔒 Loaded biometrics for: {self.target_name}")
+        if not self.net.connect():
+            print("❌ Cannot reach server. Exiting.")
+            exit()
+
+    def run(self):
+        """The main lifecycle loop."""
+        while True:
+            # 1. Start in SLEEP MODE
+            self.locker = LockScreen(on_wake_callback=self.wake_sequence)
+            self.locker.lock()  # Blocks until unlocked
+
+            # 2. Session Started
+            if self.current_user:
+                print(f"✅ Starting Session for: {self.current_user['username']}")
+                self.monitor_session()
+                # When monitor_session ends, we loop back to Lock Screen
+                self.current_user = None
+
+    def wake_sequence(self):
+        """Triggered on Spacebar/Click."""
+        print("⏰ Waking up... Fetching active renters...")
+
+        # A. Fetch Active Users
+        response = self.net.send_request("FETCH_ACTIVE_USERS", {})
+        active_users = response.get("users", []) if response else []
+
+        # B. Quick Face Scan
+        user_found = self.quick_face_scan(active_users)
+
+        if user_found:
+            self.current_user = user_found
+            print(f"🔓 FACE RECOGNIZED: {user_found['username']}")
+            self.locker.unlock()
         else:
-            print("⚠ User has no face data! (Admin/Root?)")
-            self.target_encoding = []
+            self.locker.unlock()
+            self.manual_login_sequence()
 
-    def verify_user(self, frame):
-        """
-        Returns True if the target user is found in the frame.
-        """
-        if not self.target_encoding:
-            return True  # If no face data (e.g. root/admin), skip check
+    def quick_face_scan(self, active_users):
+        """Scans for 3 seconds to find a paid user."""
+        if not active_users: return None
 
-        small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
-        rgb_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+        cap = cv2.VideoCapture(0)
+        start_time = time.time()
+        found_user = None
 
-        # Find faces in current frame
-        face_locations = face_recognition.face_locations(rgb_frame)
-        face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
-
-        for encoding in face_encodings:
-            # Check against ALL known angles of the user
-            matches = face_recognition.compare_faces(self.target_encoding, encoding, tolerance=0.5)
-            if True in matches:
-                return True
-
-        return False
-
-
-class SecuritySystem:
-    def __init__(self, authenticator, locker):
-        self.auth = authenticator
-        self.locker = locker
-        self.camera = None
-        self.is_running = True
-        self.missing_frames = 0
-        self.MAX_MISSING = 50  # How many frames you can be gone (approx 2-3 sec)
-
-    def start_session(self):
-        print("📸 Starting Camera Security...")
-        self.camera = cv2.VideoCapture(0)
-        self.locker.unlock()  # Lower the shield
-
-        while self.is_running:
-            ret, frame = self.camera.read()
+        while time.time() - start_time < 3.0:
+            ret, frame = cap.read()
             if not ret: break
 
-            # 1. Verify User
-            is_present = self.auth.verify_user(frame)
+            # Fast processing
+            small = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+            rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
+            face_encs = face_recognition.face_encodings(rgb)
 
-            if is_present:
-                self.missing_frames = 0
-                # Optional: Draw Green Box
-                cv2.rectangle(frame, (10, 10), (50, 50), (0, 255, 0), -1)
-            else:
-                self.missing_frames += 1
-                print(f"⚠ Warning: Face missing ({self.missing_frames}/{self.MAX_MISSING})")
+            for unknown_face in face_encs:
+                for user in active_users:
+                    # Check first available encoding
+                    known_face = [np.array(user['face_encoding'][0])]
+                    match = face_recognition.compare_faces(known_face, unknown_face, tolerance=0.5)
+                    if True in match:
+                        found_user = user
+                        break
+                if found_user: break
+            if found_user: break
 
-            # 2. Logic: Lock if gone too long
-            if self.missing_frames > self.MAX_MISSING:
-                print("❌ USER GONE - LOCKING SESSION")
-                self.locker.lock()
-                # Here we could break the loop to force a re-login
-                # or just keep it locked until they look back.
-                # For this new system, let's END the session to force password again.
-                break
+        cap.release()
+        return found_user
 
-                # Display (Optional - hide in real production)
-            cv2.imshow("Security Feed", frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-
-        self.camera.release()
-        cv2.destroyAllWindows()
-        self.locker.lock()  # Ensure locked on exit
-
-
-# --- MAIN APPLICATION LOOP ---
-if __name__ == "__main__":
-    net = NetworkClient(SERVER_IP)
-    if not net.connect():
-        print("❌ Cannot reach server. Exiting.")
-        exit()
-
-    locker = LockScreen()
-    # locker.lock()  <-- DELETE OR COMMENT THIS OUT!
-    # (Do not lock immediately, or it hides the login window)
-
-    while True:
-        # 2. Show Login Screen
-        print("\n🔐 WAITING FOR LOGIN...")
-        login = LoginWindow(net, STATION_ID)
-        user_data = login.show()  # This blocks until login
+    def manual_login_sequence(self):
+        login = LoginWindow(self.net, STATION_ID)
+        user_data = login.show()
 
         if user_data:
-            # 3. Login Success
-            auth = FaceAuthenticator()
-            auth.load_user(user_data)
+            # Check Time Balance (Admins bypass)
+            if user_data['role'] == 'root' or user_data['time_balance'] > 0:
+                self.current_user = user_data
+            else:
+                print("💰 Balance is 0. Please rent time.")
+                # Here you would trigger payment window
+                self.run()
 
-            # 4. Start Monitoring (Desktop Unlocked)
-            system = SecuritySystem(auth, locker)
-            system.start_session()
+    def monitor_session(self):
+        """
+        The Active User Loop.
+        Handles: Face Check, Grace Period, Time Deduction, Admin Logout.
+        """
+        cap = cv2.VideoCapture(0)
 
-            print("👋 Session Ended. Returning to Login.")
+        # Setup specific user biometrics
+        known_face = None
+        if self.current_user['face_encoding']:
+            known_face = [np.array(self.current_user['face_encoding'][0])]
 
-            # Ensure the shield is reset for the next person
-            locker.unlock()
-        else:
-            # If they closed the login window, exit the loop
-            break
+        is_admin = self.current_user['role'] == 'root'
+        balance_minutes = float(self.current_user.get('time_balance', 0))
+
+        grace_start_time = None
+        last_sync_time = time.time()
+
+        print(f"--- SESSION STARTED ({'ADMIN' if is_admin else 'USER'}) ---")
+        print("Press ESC in the Camera Window to Logout (Admin Only)")
+
+        while True:
+            ret, frame = cap.read()
+            if not ret: break
+
+            current_time = time.time()
+
+            # --- 1. TIME MANAGEMENT ---
+            if not is_admin:
+                # Deduct time locally
+                elapsed = current_time - last_sync_time
+                if elapsed >= SYNC_INTERVAL:
+                    # Update Database
+                    self.net.send_request("DEDUCT_TIME", {
+                        "username": self.current_user['username'],
+                        "seconds": elapsed
+                    })
+                    # Update local balance
+                    balance_minutes -= (elapsed / 60.0)
+                    last_sync_time = current_time
+
+                    if balance_minutes <= 0:
+                        print("❌ TIME EXPIRED! Logging out...")
+                        break
+
+            # --- 2. FACE VERIFICATION ---
+            if not is_admin:
+                # Fast Check
+                small = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+                rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
+                face_locs = face_recognition.face_locations(rgb)
+                face_encs = face_recognition.face_encodings(rgb, face_locs)
+
+                match_found = False
+                if known_face:
+                    for enc in face_encs:
+                        if True in face_recognition.compare_faces(known_face, enc, tolerance=0.5):
+                            match_found = True
+                            break
+
+                # GRACE PERIOD LOGIC
+                if match_found:
+                    # User is present, reset timer
+                    if grace_start_time is not None:
+                        print("✅ User returned. Timer reset.")
+                    grace_start_time = None
+                    # Visual: Green Border
+                    cv2.rectangle(frame, (0, 0), (640, 480), (0, 255, 0), 10)
+                else:
+                    # User missing!
+                    if grace_start_time is None:
+                        grace_start_time = time.time()
+
+                    time_gone = time.time() - grace_start_time
+                    remaining = 2.0 - time_gone
+
+                    # Visual Alert
+                    print(f"⚠ WARNING: LOGOUT IN {remaining:.1f}s")
+                    cv2.putText(frame, f"LOCKING IN {remaining:.1f}s", (50, 240),
+                                cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 5)
+
+                    if time_gone > 2.0:
+                        print("❌ USER GONE TOO LONG. LOCKING.")
+                        break
+
+            # --- 3. ADMIN / MANUAL LOGOUT ---
+            # Show the small security feed (required to capture key presses)
+            cv2.imshow("Security Monitor", frame)
+
+            # If Admin, they must press ESC to logout
+            # If User, they can also press ESC to end session early
+            key = cv2.waitKey(1) & 0xFF
+            if key == 27:  # ESC Key
+                print("👋 Manual Logout Triggered.")
+                break
+
+        # Cleanup
+        cap.release()
+        cv2.destroyAllWindows()
+        # Final sync on exit (save the last few seconds)
+        if not is_admin:
+            elapsed = time.time() - last_sync_time
+            self.net.send_request("DEDUCT_TIME", {
+                "username": self.current_user['username'],
+                "seconds": elapsed
+            })
+
+
+if __name__ == "__main__":
+    app = MainClient()
+    app.run()

@@ -178,3 +178,49 @@ class DatabaseManager:
         except Exception as e:
             print(f"❌ Update Error: {e}")
             return False
+
+    def get_active_renters(self):
+        """
+        Returns a list of users who have time_balance > 0 AND have face data.
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+
+            # --- FIX: ADDED 'role' TO THIS QUERY ---
+            cursor.execute(
+                "SELECT username, role, full_name, face_encoding, time_balance FROM users WHERE time_balance > 0 AND face_encoding IS NOT NULL")
+
+            users = cursor.fetchall()
+            conn.close()
+
+            # Parse the JSON face data
+            for u in users:
+                if u['face_encoding']:
+                    u['face_encoding'] = json.loads(u['face_encoding'])
+            return users
+        except Exception as e:
+            print(f"Fetch Error: {e}")
+            return []
+
+    def deduct_user_time(self, username, seconds_used):
+        """
+        Subtracts time from the user.
+        Converts seconds to minutes for the database storage.
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Convert seconds to minutes (e.g., 30 sec = 0.5 min)
+            minutes_to_deduct = seconds_used / 60.0
+
+            sql = "UPDATE users SET time_balance = GREATEST(0, time_balance - %s) WHERE username = %s"
+            cursor.execute(sql, (minutes_to_deduct, username))
+
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"❌ Time Deduction Error: {e}")
+            return False
