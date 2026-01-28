@@ -5,6 +5,7 @@ import face_recognition
 from network_client import NetworkClient
 from lock_screen import LockScreen
 from login_window import LoginWindow
+from rent_window import RentWindow
 
 # CONFIG
 STATION_ID = "STATION_01"
@@ -85,14 +86,29 @@ class MainClient:
 
     def manual_login_sequence(self):
         login = LoginWindow(self.net, STATION_ID)
-        user_data = login.show()
+        user_data = login.show()  # Returns dict or None
 
         if user_data:
-            if user_data.get('role') == 'root' or user_data.get('time_balance', 0) > 0:
+            role = user_data.get('role')
+            balance = float(user_data.get('time_balance', 0))
+
+            # 1. If Admin or has balance -> Login immediately
+            if role == 'root' or balance > 0:
                 self.current_user = user_data
+
+            # 2. If User has 0 balance -> Open Rent Window
             else:
-                print("💰 Balance is 0. Please rent time.")
-                self.run()
+                print("💰 Balance is 0. Opening Rent Window...")
+                renter = RentWindow(self.net, user_data['username'])
+                minutes_added = renter.show()  # Blocks until paid or closed
+
+                if minutes_added > 0:
+                    # Refresh user data to get the new balance
+                    # We manually construct the user object since we know they just paid
+                    user_data['time_balance'] = minutes_added
+                    self.current_user = user_data
+                else:
+                    print("❌ Payment cancelled. Returning to Lock Screen.")
 
     def monitor_session(self):
         cap = cv2.VideoCapture(0)

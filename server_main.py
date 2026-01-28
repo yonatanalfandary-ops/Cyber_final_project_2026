@@ -158,6 +158,17 @@ class RentalServer:
                     else:
                         response = {"status": "FAILURE", "message": "Invalid Password"}
 
+                # CASE 8: Add Rented Time
+                elif action == "ADD_TIME":
+                    username = request.get("username")
+                    minutes = request.get("minutes")
+
+                    if self.db.add_time(username, minutes):
+                        response = {"status": "SUCCESS"}
+                        print(f"💰 Added {minutes} mins for {username}")
+                    else:
+                        response = {"status": "FAILURE"}
+
                 self.send_json(client_socket, response)
 
 

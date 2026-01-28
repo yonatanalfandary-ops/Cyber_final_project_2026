@@ -1,6 +1,5 @@
 import tkinter as tk
 from tkinter import messagebox
-import sys
 
 
 class LoginWindow:
@@ -12,35 +11,44 @@ class LoginWindow:
 
     def show(self):
         self.root = tk.Tk()
-        self.root.title("Cyber Cafe Login")
-        self.root.geometry("400x350")  # Slightly taller
+
+        # --- FULLSCREEN KIOSK MODE ---
+        self.root.attributes('-fullscreen', True)  # Fullscreen
+        self.root.attributes('-topmost', True)  # Always on top
+        # -----------------------------
+
         self.root.configure(bg="#2c3e50")
 
-        # Allow closing with the X button or ESC
-        self.root.protocol("WM_DELETE_WINDOW", self.close_app)
+        # Bind Escape key to close (Safety feature)
         self.root.bind("<Escape>", lambda e: self.close_app())
 
+        # --- CENTERED CONTENT FRAME ---
+        # We create a frame to hold elements so they appear in the middle
+        content_frame = tk.Frame(self.root, bg="#2c3e50")
+        content_frame.place(relx=0.5, rely=0.5, anchor="center")
+
         # Header
-        tk.Label(self.root, text="SYSTEM LOCKED", font=("Arial", 20, "bold"), bg="#2c3e50", fg="white").pack(pady=20)
+        tk.Label(content_frame, text="SYSTEM LOCKED", font=("Arial", 30, "bold"),
+                 bg="#2c3e50", fg="white").pack(pady=30)
 
         # Inputs
-        tk.Label(self.root, text="Username:", bg="#2c3e50", fg="white").pack()
-        self.entry_user = tk.Entry(self.root, font=("Arial", 12))
+        tk.Label(content_frame, text="Username:", font=("Arial", 14), bg="#2c3e50", fg="white").pack()
+        self.entry_user = tk.Entry(content_frame, font=("Arial", 16), width=20)
         self.entry_user.pack(pady=5)
 
-        tk.Label(self.root, text="Password:", bg="#2c3e50", fg="white").pack()
-        self.entry_pass = tk.Entry(self.root, show="*", font=("Arial", 12))
+        tk.Label(content_frame, text="Password:", font=("Arial", 14), bg="#2c3e50", fg="white").pack()
+        self.entry_pass = tk.Entry(content_frame, show="*", font=("Arial", 16), width=20)
         self.entry_pass.pack(pady=5)
 
         # Login Button
-        btn_login = tk.Button(self.root, text="LOGIN", command=self.perform_login, font=("Arial", 12, "bold"),
-                              bg="#27ae60", fg="white")
-        btn_login.pack(pady=20, ipadx=20)
+        btn_login = tk.Button(content_frame, text="LOGIN", command=self.perform_login,
+                              font=("Arial", 16, "bold"), bg="#27ae60", fg="white", width=15)
+        btn_login.pack(pady=30)
 
-        # Exit Button (Safe Key)
-        btn_exit = tk.Button(self.root, text="Exit System", command=self.close_app, font=("Arial", 10), bg="#c0392b",
-                             fg="white")
-        btn_exit.pack(pady=5)
+        # Exit Button
+        btn_exit = tk.Button(content_frame, text="Cancel", command=self.close_app,
+                             font=("Arial", 12), bg="#c0392b", fg="white")
+        btn_exit.pack(pady=10)
 
         self.root.mainloop()
         return self.user_data
@@ -71,6 +79,4 @@ class LoginWindow:
     def close_app(self):
         print("Back to Lock Screen.")
         self.root.destroy()
-        # Do NOT call sys.exit() here!
-        # Returning None tells main_client to go back to sleep.
         return None

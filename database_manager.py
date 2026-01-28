@@ -246,3 +246,24 @@ class DatabaseManager:
         except Exception as e:
             print(f"❌ Update Face Error: {e}")
             return False
+
+    def add_time(self, username, minutes):
+        """Adds minutes to the user's existing balance."""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            sql = "UPDATE users SET time_balance = time_balance + %s WHERE username = %s"
+            cursor.execute(sql, (minutes, username))
+            conn.commit()
+
+            # Verify the update happened
+            if cursor.rowcount > 0:
+                return True
+            return False
+
+        except Exception as e:
+            print(f"❌ Add Time Error: {e}")
+            return False
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
