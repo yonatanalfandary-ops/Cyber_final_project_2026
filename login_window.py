@@ -69,6 +69,8 @@ class LoginWindow:
             messagebox.showerror("Login Failed", msg)
 
     def close_app(self):
-        print("User closed the application.")
+        print("Back to Lock Screen.")
         self.root.destroy()
-        sys.exit()  # Clean exit
+        # Do NOT call sys.exit() here!
+        # Returning None tells main_client to go back to sleep.
+        return None

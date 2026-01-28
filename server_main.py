@@ -140,6 +140,24 @@ class RentalServer:
                     # to keep traffic low, but let's send a simple OK for now.
                     response = {"status": "SUCCESS"}
 
+                # CASE 7: Update Face Data (Multi-Angle)
+                elif action == "UPDATE_FACE":
+                    username = request.get("username")
+                    password = request.get("password")
+                    face_data = request.get("face_data")
+
+                    # 1. Verify credentials first
+                    user = self.db.validate_user(username, password)
+
+                    if user:
+                        # 2. Update the face data
+                        if self.db.update_user_face(username, face_data):
+                            response = {"status": "SUCCESS"}
+                        else:
+                            response = {"status": "FAILURE", "message": "Database Error"}
+                    else:
+                        response = {"status": "FAILURE", "message": "Invalid Password"}
+
                 self.send_json(client_socket, response)
 
 

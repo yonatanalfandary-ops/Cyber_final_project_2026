@@ -224,3 +224,25 @@ class DatabaseManager:
         except Exception as e:
             print(f"❌ Time Deduction Error: {e}")
             return False
+
+    def update_user_face(self, username, face_data):
+        """
+        Updates the face_encoding for an existing user.
+        face_data is now a LIST of encodings (multiple angles).
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Convert list to JSON string for storage
+            face_json = json.dumps(face_data)
+
+            sql = "UPDATE users SET face_encoding = %s WHERE username = %s"
+            cursor.execute(sql, (face_json, username))
+
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"❌ Update Face Error: {e}")
+            return False

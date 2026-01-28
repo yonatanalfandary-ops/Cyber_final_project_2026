@@ -1,59 +1,80 @@
 import cv2
 import face_recognition
 import json
-import time
+import tkinter as tk
+from tkinter import messagebox
 from network_client import NetworkClient
 
 # CONFIG
 SERVER_IP = "127.0.0.1"
 
 
-def capture_and_update():
-    print("--- 📸 FACE UPDATE TOOL ---")
-    username = input("Enter Username to update: ")
-    password = input("Enter Password: ")
+class FaceCaptureApp:
+    def __init__(self):
+        self.net = NetworkClient(SERVER_IP)
+        if not self.net.connect():
+            print("❌ Cannot connect to server.")
+            exit()
 
-    cap = cv2.VideoCapture(0)
-    print("\nLook at the camera. Press 's' to SNAP.")
+    def capture_process(self):
+        username = input("Enter Username to update: ")
+        password = input("Enter Password: ")
 
-    face_data = None
+        print(f"\n📸 Starting Multi-Angle Capture for {username}")
+        print("We need 5 angles: Center, Left, Right, Up, Down")
 
-    while True:
-        ret, frame = cap.read()
-        if not ret: break
+        cap = cv2.VideoCapture(0)
+        face_data = []
+        instructions = ["Look CENTER", "Look slightly LEFT", "Look slightly RIGHT", "Look slightly UP",
+                        "Look slightly DOWN"]
 
-        cv2.imshow("Capture - Press 's'", frame)
+        for instruction in instructions:
+            while True:
+                ret, frame = cap.read()
+                if not ret: break
 
-        if cv2.waitKey(1) & 0xFF == ord('s'):
-            print("Processing...")
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            encodings = face_recognition.face_encodings(rgb_frame)
+                # Show instruction on screen
+                cv2.putText(frame, f"{instruction} and press 's'", (50, 50),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                cv2.imshow("Capture", frame)
 
-            if len(encodings) > 0:
-                # We found a face!
-                print("✅ Face Captured!")
-                # Convert to list for JSON sending
-                face_data = [encodings[0].tolist()]
-                break
-            else:
-                print("❌ No face detected. Try again.")
+                key = cv2.waitKey(1)
+                if key & 0xFF == ord('s'):
+                    # Capture and Process
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    boxes = face_recognition.face_locations(rgb)
+                    encodings = face_recognition.face_encodings(rgb, boxes)
 
-    cap.release()
-    cv2.destroyAllWindows()
+                    if len(encodings) > 0:
+                        print(f"✅ Captured: {instruction}")
+                        # Convert numpy array to list for JSON serialization
+                        face_data.append(encodings[0].tolist())
+                        break
+                    else:
+                        print("❌ No face found. Try again.")
 
-    if face_data:
-        print(f"📡 Sending data to Server for user '{username}'...")
-        net = NetworkClient(SERVER_IP)
-        if net.connect():
-            resp = net.send_request("UPDATE_FACE", {
-                "username": username,
-                "password": password,
-                "face_data": face_data
-            })
-            print(f"Server Response: {resp}")
+                if key & 0xFF == 27:  # ESC
+                    cap.release()
+                    cv2.destroyAllWindows()
+                    return
+
+        cap.release()
+        cv2.destroyAllWindows()
+
+        # Send to Server
+        print("📤 Sending data to server...")
+        response = self.net.send_request("UPDATE_FACE", {
+            "username": username,
+            "password": password,
+            "face_data": face_data  # Now a list of 5 lists
+        })
+
+        if response.get("status") == "SUCCESS":
+            print("✅ Face Data Updated Successfully!")
         else:
-            print("❌ Could not connect to server.")
+            print(f"❌ Error: {response.get('message')}")
 
 
 if __name__ == "__main__":
-    capture_and_update()
+    app = FaceCaptureApp()
+    app.capture_process()
