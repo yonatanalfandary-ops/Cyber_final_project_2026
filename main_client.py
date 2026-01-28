@@ -8,6 +8,7 @@ from login_window import LoginWindow
 from rent_window import RentWindow
 import tkinter as tk               # Needed to create a temporary root for settings
 from settings_window import SettingsWindow
+from admin_panel import AdminPanel
 
 # CONFIG
 STATION_ID = "STATION_01"
@@ -32,8 +33,17 @@ class MainClient:
             self.locker.lock()
 
             if self.current_user:
-                print(f"✅ Starting Session for: {self.current_user['username']}")
-                self.monitor_session()
+                print(f"✅ Logged in as: {self.current_user['username']} ({self.current_user['role']})")
+
+                # --- CHECK ROLE ---
+                if self.current_user['role'] == 'root':
+                    # Launch Admin Panel
+                    admin = AdminPanel(self.net, self.current_user['username'])
+                    admin.show()  # Blocks until admin logs out
+                else:
+                    # Launch Standard User Session
+                    self.monitor_session()
+
                 self.current_user = None
 
     def wake_sequence(self):

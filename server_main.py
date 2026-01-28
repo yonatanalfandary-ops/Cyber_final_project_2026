@@ -178,6 +178,25 @@ class RentalServer:
                     success, msg = self.db.update_user_field(username, field, new_value)
                     response = {"status": "SUCCESS" if success else "FAILURE", "message": msg}
 
+                # CASE 10: Fetch All Users (Admin)
+                elif action == "FETCH_ALL_USERS":
+                    users = self.db.get_all_users()
+                    response = {"status": "SUCCESS", "users": users}
+
+                # CASE 11: Create User
+                elif action == "CREATE_USER":
+                    success, msg = self.db.create_user(
+                        request["username"], request["password"],
+                        request["full_name"], request["role"]
+                    )
+                    response = {"status": "SUCCESS" if success else "FAILURE", "message": msg}
+
+                # CASE 12: Delete User
+                elif action == "DELETE_USER":
+                    success, msg = self.db.delete_user(request["username"])
+                    response = {"status": "SUCCESS" if success else "FAILURE", "message": msg}
+
+
                 self.send_json(client_socket, response)
 
 

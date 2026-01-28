@@ -125,7 +125,8 @@ class DatabaseManager:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
 
-            cursor.execute("SELECT * FROM users WHERE username = %s AND password_hash = %s", (username, password))
+            sql = "SELECT * FROM users WHERE username = %s AND password = %s"
+            cursor.execute(sql, (username, password))
             user = cursor.fetchone()
             conn.close()
 
@@ -253,7 +254,7 @@ class DatabaseManager:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            sql = "UPDATE users SET time_balance = time_balance + %s WHERE username = %s"
+            sql = "UPDATE users SET time_balance = GREATEST(0, time_balance + %s) WHERE username = %s"
             cursor.execute(sql, (minutes, username))
             conn.commit()
 
@@ -269,15 +270,12 @@ class DatabaseManager:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
     def update_user_field(self, current_username, field, new_value):
-        """
-        Updates a specific text field (full_name, password_hash, username).
-        """
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # ALLOWED FIELDS ONLY (Security)
-            if field not in ['full_name', 'password_hash', 'username']:
+            # CHANGED 'password_hash' -> 'password' in the allowed list
+            if field not in ['full_name', 'password', 'username', 'role']:
                 return False, "Invalid field"
 
             sql = f"UPDATE users SET {field} = %s WHERE username = %s"
@@ -288,6 +286,47 @@ class DatabaseManager:
                 return True, "Update success"
             return False, "User not found"
 
+        except Exception as e:
+            return False, str(e)
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
+
+    def get_all_users(self):
+        """Returns a list of all users (username, full_name, role, time_balance)."""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("SELECT username, full_name, role, time_balance FROM users")
+            users = cursor.fetchall()
+            return users
+        except Exception as e:
+            return []
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
+
+    def create_user(self, username, password, full_name, role):
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # REMOVED user_id from INSERT. The DB will handle it now.
+            # CHANGED password_hash -> password
+            sql = "INSERT INTO users (username, password, full_name, role, time_balance) VALUES (%s, %s, %s, %s, 0)"
+            cursor.execute(sql, (username, password, full_name, role))
+            conn.commit()
+            return True, "User created"
+        except Exception as e:
+            return False, str(e)
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
+
+    def delete_user(self, username):
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM users WHERE username = %s", (username,))
+            conn.commit()
+            return True, "User deleted"
         except Exception as e:
             return False, str(e)
         finally:

@@ -77,7 +77,8 @@ class SettingsWindow:
     def change_password(self):
         new_pass = simpledialog.askstring("Update Password", "Enter new Password:", parent=self.root, show="*")
         if new_pass:
-            if self.send_update("password_hash", new_pass):
+            # CHANGED: "password_hash" -> "password"
+            if self.send_update("password", new_pass):
                 messagebox.showinfo("Success", "Password updated.", parent=self.root)
             else:
                 messagebox.showerror("Error", "Failed to update.", parent=self.root)
@@ -85,7 +86,7 @@ class SettingsWindow:
     def change_username(self):
         new_user = simpledialog.askstring("Update Username", "Enter new Username:", parent=self.root)
         if new_user:
-            confirm = messagebox.askyesno("Confirm", "Changing username will log you out if fails. Continue?",
+            confirm = messagebox.askyesno("Confirm", "Are you sure?",
                                           parent=self.root)
             if not confirm: return
 
