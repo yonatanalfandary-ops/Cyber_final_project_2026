@@ -169,6 +169,15 @@ class RentalServer:
                     else:
                         response = {"status": "FAILURE"}
 
+                # CASE 9: Update Profile Settings
+                elif action == "UPDATE_PROFILE":
+                    username = request.get("username")
+                    field = request.get("field")  # 'full_name', 'password_hash', 'username'
+                    new_value = request.get("value")
+
+                    success, msg = self.db.update_user_field(username, field, new_value)
+                    response = {"status": "SUCCESS" if success else "FAILURE", "message": msg}
+
                 self.send_json(client_socket, response)
 
 

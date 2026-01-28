@@ -6,6 +6,8 @@ from network_client import NetworkClient
 from lock_screen import LockScreen
 from login_window import LoginWindow
 from rent_window import RentWindow
+import tkinter as tk               # Needed to create a temporary root for settings
+from settings_window import SettingsWindow
 
 # CONFIG
 STATION_ID = "STATION_01"
@@ -128,7 +130,7 @@ class MainClient:
         last_loop_time = time.time()  # Used to calculate exact delta for display
 
         print(f"--- SESSION STARTED ({'ADMIN' if is_admin else 'USER'}) ---")
-        print("Press ESC in the Camera Window to Logout")
+        print("Press ESC or 'Q' to Logout. Press 'S' for Settings.")
 
         while True:
             ret, frame = cap.read()
@@ -158,6 +160,7 @@ class MainClient:
 
             # --- 2. FACE VERIFICATION ---
             if not is_admin:
+                # Optimization: Resize frame for faster processing
                 small = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
                 rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
 
@@ -186,7 +189,6 @@ class MainClient:
                     time_gone = time.time() - grace_start_time
                     remaining = 2.0 - time_gone
 
-                    print(f"⚠ WARNING: LOGOUT IN {remaining:.1f}s")
                     cv2.putText(frame, f"LOCKING IN {remaining:.1f}s", (50, 240),
                                 cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 5)
 
@@ -195,27 +197,63 @@ class MainClient:
                         break
 
             # --- 3. DISPLAY & CONTROLS ---
-            # Format nicely
             if local_balance_minutes < 0: local_balance_minutes = 0
             mins = int(local_balance_minutes)
             secs = int((local_balance_minutes - mins) * 60)
-            time_str = f"TIME LEFT: {mins}:{secs:02d}"
 
-            cv2.rectangle(frame, (10, 10), (350, 60), (0, 0, 0), -1)
-            cv2.putText(frame, time_str, (20, 50),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            # Draw UI Box
+            cv2.rectangle(frame, (10, 10), (400, 110), (0, 0, 0), -1)
+
+            # Line 1: Time Left
+            time_str = f"TIME: {mins}:{secs:02d}"
+            cv2.putText(frame, time_str, (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+            # Line 2: Instructions
+            cv2.putText(frame, "[S] Settings  [Q] Logout", (20, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
             cv2.imshow("Security Monitor", frame)
 
             key = cv2.waitKey(1) & 0xFF
-            if key == 27:  # ESC Key
+
+            # --- KEY HANDLERS ---
+
+            # [Q] or [ESC] to Quit
+            if key == ord('q') or key == 27:
                 print("👋 Manual Logout Triggered.")
                 break
+
+            # [S] to Open Settings
+            if key == ord('s'):
+                print("⚙ Opening Settings...")
+
+                # 1. Release camera so Settings can use it
+                cap.release()
+                cv2.destroyAllWindows()
+
+                # 2. Create invisible root for settings
+                temp_root = tk.Tk()
+                temp_root.withdraw()
+
+                # 3. Open Settings (Code pauses here)
+                settings = SettingsWindow(self.net, self.current_user['username'], temp_root, from_payment=False)
+                new_username = settings.show()
+
+                # 4. Cleanup
+                temp_root.destroy()
+
+                # 5. Update username (in case they changed it)
+                self.current_user['username'] = new_username
+
+                # 6. Restart Camera
+                cap = cv2.VideoCapture(0)
+                # Reset time tracking to prevent huge deduction
+                last_loop_time = time.time()
 
         cap.release()
         cv2.destroyAllWindows()
 
-        # Final sync
+        # Final sync on exit
         if not is_admin:
             elapsed = time.time() - last_sync_time
             self.net.send_request("DEDUCT_TIME", {

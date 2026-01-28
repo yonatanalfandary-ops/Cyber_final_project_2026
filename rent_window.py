@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox
-
+from settings_window import SettingsWindow
 
 class RentWindow:
     def __init__(self, network_client, username):
@@ -48,20 +48,38 @@ class RentWindow:
         # Price Display
         self.lbl_price = tk.Label(content_frame, text="Total: $0.00",
                                   font=("Arial", 28, "bold"), bg="#2c3e50", fg="#f1c40f")
-        self.lbl_price.pack(pady=30)
+        self.lbl_price.pack(pady=20)
 
         # Payment Button
         tk.Button(content_frame, text="PAY & UNLOCK", font=("Arial", 18, "bold"),
-                  bg="#27ae60", fg="white", width=20, command=self.process_payment).pack(pady=10)
+                  bg="#27ae60", fg="white", width=20, command=self.process_payment).pack(pady=5)
+
+        # --- NEW SETTINGS BUTTON ---
+        tk.Button(content_frame, text="Account Settings", command=self.open_settings,
+                  font=("Arial", 12), bg="#3498db", fg="white").pack(pady=10)
+        # ---------------------------
 
         # Cancel Button
         tk.Button(content_frame, text="Cancel", command=self.close,
-                  font=("Arial", 14), bg="#c0392b", fg="white").pack(pady=20)
+                  font=("Arial", 14), bg="#c0392b", fg="white").pack(pady=10)
 
         self.entry_mins.focus_set()
 
         self.root.mainloop()
         return self.added_time
+
+    def open_settings(self):
+        self.root.withdraw()
+
+        # Pass True because we want the "Back to Payment" button
+        settings = SettingsWindow(self.net, self.username, self.root, from_payment=True)
+
+        updated_username = settings.show()
+        self.username = updated_username
+
+        self.root.deiconify()
+        self.root.attributes('-fullscreen', True)
+        self.root.attributes('-topmost', True)
 
     def validate_number(self, new_text):
         if new_text == "": return True

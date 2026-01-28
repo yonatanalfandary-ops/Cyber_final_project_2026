@@ -267,3 +267,28 @@ class DatabaseManager:
             return False
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
+
+    def update_user_field(self, current_username, field, new_value):
+        """
+        Updates a specific text field (full_name, password_hash, username).
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # ALLOWED FIELDS ONLY (Security)
+            if field not in ['full_name', 'password_hash', 'username']:
+                return False, "Invalid field"
+
+            sql = f"UPDATE users SET {field} = %s WHERE username = %s"
+            cursor.execute(sql, (new_value, current_username))
+            conn.commit()
+
+            if cursor.rowcount > 0:
+                return True, "Update success"
+            return False, "User not found"
+
+        except Exception as e:
+            return False, str(e)
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
