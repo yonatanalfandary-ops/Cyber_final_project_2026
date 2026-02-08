@@ -26,8 +26,9 @@ class RentWindow:
         content_frame.place(relx=0.5, rely=0.5, anchor="center")
 
         # Header
-        tk.Label(content_frame, text=f"Hello, {self.username}",
-                 font=("Arial", 24), bg="#2c3e50", fg="white").pack(pady=20)
+        self.lbl_welcome = tk.Label(content_frame, text=f"Hello, {self.username}",
+                                    font=("Arial", 24), bg="#2c3e50", fg="white")
+        self.lbl_welcome.pack(pady=20)
 
         tk.Label(content_frame, text=f"Rate: ${self.price_per_min:.2f} / min",
                  font=("Arial", 14, "italic"), bg="#2c3e50", fg="#bdc3c7").pack()
@@ -75,7 +76,12 @@ class RentWindow:
         settings = SettingsWindow(self.net, self.username, self.root, from_payment=True)
 
         updated_username = settings.show()
-        self.username = updated_username
+
+        # If the user actually changed their name (didn't just close the window)
+        if updated_username:
+            self.username = updated_username
+            # Update the text on the screen
+            self.lbl_welcome.config(text=f"Hello, {self.username}")
 
         self.root.deiconify()
         self.root.attributes('-fullscreen', True)
