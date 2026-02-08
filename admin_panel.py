@@ -209,6 +209,7 @@ class AdminPanel:
             self.time_input_value = int(val)
             dialog.destroy()
 
+
         # Submit Button
         tk.Button(dialog, text="Update Balance", command=on_submit,
                   bg="#27ae60", fg="white", font=("Arial", 11, "bold")).pack(pady=8)
@@ -254,10 +255,12 @@ class AdminPanel:
                                       parent=self.root)
         if not confirm: return
 
+        # 1. Hide Admin Panel & Open Camera
         self.root.withdraw()
         cap = cv2.VideoCapture(0)
         captured_encodings = []
         angles = ["Center", "Left", "Right", "Up", "Down"]
+        capture_successful = False
 
         try:
             for angle in angles:
@@ -265,14 +268,19 @@ class AdminPanel:
                 while not captured:
                     ret, frame = cap.read()
                     if not ret: break
-                    cv2.putText(frame, f"User: {user['username']} - Look {angle}", (20, 50),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                    cv2.putText(frame, "Press SPACE to Capture", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                                (255, 255, 255), 1)
+
+                    # UI Overlay
+                    cv2.putText(frame, f"User: {user['username']}", (20, 40),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
+                    cv2.putText(frame, f"Look: {angle}", (20, 80),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 2)
+                    cv2.putText(frame, "Press [SPACE] to Capture", (20, 450),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 1)
 
                     cv2.imshow("Admin Face Setup", frame)
                     key = cv2.waitKey(1)
-                    if key == 32:  # Space
+
+                    if key == 32:  # Space Bar
                         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         boxes = face_recognition.face_locations(rgb)
                         if boxes:
@@ -280,29 +288,50 @@ class AdminPanel:
                             if encs:
                                 captured_encodings.append(encs[0].tolist())
                                 captured = True
+                                # Flash Green Effect
                                 cv2.rectangle(frame, (0, 0), (640, 480), (0, 255, 0), 20)
                                 cv2.imshow("Admin Face Setup", frame)
-                                cv2.waitKey(500)
-                    if key == 27:  # ESC
-                        cap.release()
-                        cv2.destroyAllWindows()
-                        self.root.deiconify()
-                        return
+                                cv2.waitKey(300)
 
-            # Simple auth check before sending
-            admin_pass = simpledialog.askstring("Auth", "Enter ADMIN password to confirm:", show="*", parent=self.root)
-            self.net.send_request("UPDATE_FACE", {
-                "username": user['username'],
-                "password": admin_pass,
-                "face_data": captured_encodings
-            })
-            messagebox.showinfo("Info", "Request sent.")
+                    if key == 27:  # ESC Key
+                        print("Capture Cancelled.")
+                        return  # Exit function immediately
+
+            capture_successful = True
 
         finally:
+            # 2. ALWAYS Clean up Camera & Restore UI
             cap.release()
             cv2.destroyAllWindows()
             self.root.deiconify()
             self.root.attributes('-topmost', True)
+
+        # 3. Only proceed if we actually got the data
+        if capture_successful:
+            # Ask for Admin Password
+            admin_pass = simpledialog.askstring("Security Check",
+                                                "Enter ADMIN/USER's password to confirm update:",
+                                                show="*",
+                                                parent=self.root)
+            if not admin_pass: return
+
+            # Send to Server
+            response = self.net.send_request("UPDATE_FACE", {
+                "username": user['username'],
+                "password": admin_pass,
+                "face_data": captured_encodings
+            })
+
+            # 4. Show the Result Popup
+            if response and response.get("status") == "SUCCESS":
+                messagebox.showinfo("Success",
+                                    f"✅ Face ID updated for {user['username']}",
+                                    parent=self.root)
+            else:
+                error_msg = response.get("message", "Unknown Error") if response else "No Server Response"
+                messagebox.showerror("Failed",
+                                     f"❌ Update Denied.\nReason: {error_msg}",
+                                     parent=self.root)
 
     def validate_time_input(self, P):
         """

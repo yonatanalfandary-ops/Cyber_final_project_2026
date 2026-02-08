@@ -53,50 +53,41 @@ class RentalServer:
 
                 response = {"status": "ERROR", "message": "Unknown Action"}
 
-                # --- NEW LOGIC FOR RBAC SYSTEM ---
-
-                # CASE 1: User Login (Station -> Server)
+                # CASE 1: User Login
                 if action == "LOGIN":
                     username = request.get("username")
                     password = request.get("password")
                     station_id = request.get("station_id")
 
-                    # Authenticate User
                     user = self.db.authenticate_user_login(username, password)
 
                     if user:
-                        # User found! Now activate the station
                         self.db.activate_station(station_id)
                         response = {
                             "status": "SUCCESS",
                             "username": user['username'],
                             "role": user['role'],
                             "time_balance": user['time_balance'],
-                            "face_encoding": user['face_encoding']  # Send ONLY this user's face
+                            "face_encoding": user['face_encoding']
                         }
                         print(f"✅ User '{username}' logged in at {station_id}")
                     else:
                         response = {"status": "FAIL", "message": "Invalid Username or Password"}
 
-                # CASE 2: Register New User (Only Root can do this)
+                # CASE 2: Register New User
                 elif action == "REGISTER_USER":
-                    # Check who is asking? (In real system, we'd check a session token)
-                    # For now, we trust the client to send 'requester_role'
                     if request.get("requester_role") == "root":
                         success = self.db.register_user(
                             request.get("new_username"),
                             request.get("new_password"),
-                            request.get("face_data"),  # Expecting List of Lists
+                            request.get("face_data"),
                             role="user"
                         )
-                        if success:
-                            response = {"status": "SUCCESS", "message": "User Created"}
-                        else:
-                            response = {"status": "FAIL", "message": "User already exists"}
+                        response = {"status": "SUCCESS" if success else "FAIL"}
                     else:
                         response = {"status": "DENIED", "message": "Only Root can create users."}
 
-                # CASE 3: Register Station (Only Admin/Root can do this)
+                # CASE 3: Register Station
                 elif action == "REGISTER_STATION":
                     if request.get("requester_role") == "root":
                         success = self.db.register_station(
@@ -107,27 +98,32 @@ class RentalServer:
                     else:
                         response = {"status": "DENIED", "message": "Permission Denied"}
 
-                # CASE 4: Update User Face (For fixing the fake data)
+                # CASE 4: Update User Face (FIXED)
                 elif action == "UPDATE_FACE":
-                    username = request.get("username")
+                    target_username = request.get("username")
                     password = request.get("password")
                     new_face_data = request.get("face_data")
 
-                    # Security Check: Verify password before allowing change!
-                    user = self.db.authenticate_user_login(username, password)
+                    # A. Check if it's the user themselves
+                    user_auth = self.db.authenticate_user_login(target_username, password)
 
-                    if user:
-                        success = self.db.update_user_face(username, new_face_data)
+                    # B. Check if it's the Admin overriding (Root Override)
+                    admin_auth = self.db.authenticate_user_login("admin", password)
+                    is_admin = admin_auth and admin_auth['role'] == 'root'
+
+                    if user_auth or is_admin:
+                        success = self.db.update_user_face(target_username, new_face_data)
                         if success:
                             response = {"status": "SUCCESS", "message": "Face Updated"}
+                            print(f"📸 Face updated for {target_username}")
                         else:
                             response = {"status": "FAIL", "message": "Database Error"}
                     else:
+                        print(f"⛔ Denied face update for {target_username} (Bad Password)")
                         response = {"status": "DENIED", "message": "Bad Password"}
 
-                # CASE 5: Get Active Renters (For Face-First Login)
+                # CASE 5: Fetch Active Renters
                 elif action == "FETCH_ACTIVE_USERS":
-                    # In a real app, we would verify the station_id here
                     active_users = self.db.get_active_renters()
                     response = {"status": "SUCCESS", "users": active_users}
 
@@ -136,54 +132,24 @@ class RentalServer:
                     username = request.get("username")
                     seconds = request.get("seconds")
                     self.db.deduct_user_time(username, seconds)
-                    # We don't necessarily need to send a response for every heartbeat
-                    # to keep traffic low, but let's send a simple OK for now.
                     response = {"status": "SUCCESS"}
 
-                # CASE 7: Update Face Data (Multi-Angle)
-                elif action == "UPDATE_FACE":
-                    username = request.get("username")
-                    password = request.get("password")
-                    face_data = request.get("face_data")
-
-                    # 1. Verify credentials first
-                    user = self.db.validate_user(username, password)
-
-                    if user:
-                        # 2. Update the face data
-                        if self.db.update_user_face(username, face_data):
-                            response = {"status": "SUCCESS"}
-                        else:
-                            response = {"status": "FAILURE", "message": "Database Error"}
-                    else:
-                        response = {"status": "FAILURE", "message": "Invalid Password"}
-
-                # CASE 8: Add Rented Time
+                # CASE 7: Add Rented Time
                 elif action == "ADD_TIME":
                     username = request.get("username")
                     minutes = request.get("minutes")
-
                     if self.db.add_time(username, minutes):
                         response = {"status": "SUCCESS"}
                         print(f"💰 Added {minutes} mins for {username}")
                     else:
                         response = {"status": "FAILURE"}
 
-                # CASE 9: Update Profile Settings
-                elif action == "UPDATE_PROFILE":
-                    username = request.get("username")
-                    field = request.get("field")  # 'full_name', 'password_hash', 'username'
-                    new_value = request.get("value")
-
-                    success, msg = self.db.update_user_field(username, field, new_value)
-                    response = {"status": "SUCCESS" if success else "FAILURE", "message": msg}
-
-                # CASE 10: Fetch All Users (Admin)
+                # CASE 8: Fetch All Users
                 elif action == "FETCH_ALL_USERS":
                     users = self.db.get_all_users()
                     response = {"status": "SUCCESS", "users": users}
 
-                # CASE 11: Create User
+                # CASE 9: Create User (Admin Panel)
                 elif action == "CREATE_USER":
                     success, msg = self.db.create_user(
                         request["username"], request["password"],
@@ -191,14 +157,12 @@ class RentalServer:
                     )
                     response = {"status": "SUCCESS" if success else "FAILURE", "message": msg}
 
-                # CASE 12: Delete User
+                # CASE 10: Delete User
                 elif action == "DELETE_USER":
                     success, msg = self.db.delete_user(request["username"])
                     response = {"status": "SUCCESS" if success else "FAILURE", "message": msg}
 
-
                 self.send_json(client_socket, response)
-
 
         except Exception as e:
             print(f"⚠ Connection Error {addr}: {e}")
