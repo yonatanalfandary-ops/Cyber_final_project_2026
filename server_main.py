@@ -122,6 +122,22 @@ class RentalServer:
                         print(f"⛔ Denied face update for {target_username} (Bad Password)")
                         response = {"status": "DENIED", "message": "Bad Password"}
 
+                # CASE 4b: Update Profile (Username, Password, Full Name)
+                elif action == "UPDATE_PROFILE":
+                    username = request.get("username")
+                    field = request.get("field")
+                    value = request.get("value")
+
+                    # Call the existing method in your Database Manager
+                    # This keeps the SQL logic inside database_manager.py
+                    success, msg = self.db.update_user_field(username, field, value)
+
+                    if success:
+                        response = {"status": "SUCCESS", "message": "Profile Updated"}
+                        print(f"✅ Updated {field} for {username}")
+                    else:
+                        response = {"status": "ERROR", "message": msg}
+
                 # CASE 5: Fetch Active Renters
                 elif action == "FETCH_ACTIVE_USERS":
                     active_users = self.db.get_active_renters()

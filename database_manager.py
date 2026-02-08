@@ -29,18 +29,19 @@ class DatabaseManager:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # 1. USERS TABLE - MATCHING YOUR EXISTING STRUCTURE
+            # 1. USERS TABLE
             cursor.execute('''
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id VARCHAR(36) PRIMARY KEY,
-                    username VARCHAR(50) UNIQUE NOT NULL,
-                    password VARCHAR(255),
-                    role VARCHAR(20) DEFAULT 'user', 
-                    time_balance FLOAT DEFAULT 0,
-                    face_encoding TEXT, 
-                    created_at DATETIME
-                )
-            ''')
+                            CREATE TABLE IF NOT EXISTS users (
+                                user_id VARCHAR(36) PRIMARY KEY,
+                                username VARCHAR(50) UNIQUE NOT NULL,
+                                password VARCHAR(255),
+                                full_name VARCHAR(100),  -- <--- ADD THIS LINE
+                                role VARCHAR(20) DEFAULT 'user', 
+                                time_balance FLOAT DEFAULT 0,
+                                face_encoding TEXT, 
+                                created_at DATETIME
+                            )
+                        ''')
 
             # 2. STATIONS TABLE
             cursor.execute('''
