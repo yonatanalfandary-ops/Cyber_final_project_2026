@@ -3,7 +3,9 @@ import time
 import numpy as np
 import face_recognition
 import tkinter as tk
+from tkinter import messagebox
 from settings_window import SettingsWindow
+from rent_window import RentWindow
 
 
 class SessionGuard:
@@ -19,6 +21,9 @@ class SessionGuard:
         self.last_sync = time.time()
         self.last_loop = time.time()
 
+        # Warning Flag
+        self.warning_shown = False
+
         # Face Data (Pre-load for performance)
         self.known_faces = []
         if self.user.get('face_encoding'):
@@ -29,12 +34,16 @@ class SessionGuard:
         cap = cv2.VideoCapture(0)
         print(f"--- SESSION STARTED: {self.user['username']} ---")
 
+        # Reset timer base
+        self.last_loop = time.time()
+
         while self.is_running:
             ret, frame = cap.read()
             if not ret: break
 
             # 1. Update State (Timer & Sync)
-            if not self._update_time_logic():
+            # We pass 'cap' so we can pause/release it if we need to show a popup
+            if not self._update_time_logic(cap):
                 break  # Time expired
 
             # 2. Check Security (Face Scan)
@@ -51,10 +60,13 @@ class SessionGuard:
         # Cleanup
         cap.release()
         cv2.destroyAllWindows()
+
+        # Final Sync (This is the method that was missing!)
         self._final_sync()
+
         return self.user
 
-    def _update_time_logic(self):
+    def _update_time_logic(self, cap):
         """Calculates time deduction and server sync."""
         if self.is_admin: return True
 
@@ -64,6 +76,15 @@ class SessionGuard:
 
         # Local countdown
         self.balance_mins -= (dt / 60.0)
+
+        # --- RE-ARM WARNING ---
+        if self.balance_mins > 1.0:
+            self.warning_shown = False
+
+        # --- TRIGGER WARNING ---
+        if not self.warning_shown and 0 < self.balance_mins <= 1.0:
+            self.warning_shown = True
+            self._show_warning_popup(cap)
 
         # Server Sync (Every 5s)
         if current_time - self.last_sync >= 5:
@@ -78,12 +99,45 @@ class SessionGuard:
             return False
         return True
 
+    def _show_warning_popup(self, cap):
+        """Pauses camera, asks to add time, and handles the result."""
+        # 1. Pause Camera
+        cap.release()
+        cv2.destroyAllWindows()
+
+        # 2. Create hidden root for the popup
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+
+        # 3. Ask the User
+        choice = messagebox.askyesno(
+            "Time Low",
+            "⚠ You have less than 1 minute left!\n\nDo you want to add more time?",
+            parent=root
+        )
+
+        # 4. Handle "Yes"
+        if choice:
+            root.destroy()
+            rent = RentWindow(self.net, self.user['username'])
+            minutes_added = rent.show()
+
+            if minutes_added > 0:
+                print(f"💰 User added {minutes_added} minutes.")
+                self.balance_mins += minutes_added
+        else:
+            root.destroy()
+
+        # 5. Restart Camera & Timer
+        cap.open(0)
+        self.last_loop = time.time()
+
     def _check_biometrics(self, frame):
         """Verifies if the user is present."""
         small = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
         rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
 
-        # Check faces
         match_found = False
         if self.known_faces:
             face_encs = face_recognition.face_encodings(rgb)
@@ -93,19 +147,17 @@ class SessionGuard:
                     match_found = True
                     break
 
-        # Grace Period Logic
         if match_found:
             self.grace_start = None
         else:
             if self.grace_start is None: self.grace_start = time.time()
 
             elapsed = time.time() - self.grace_start
-            if elapsed > 2.0:
+            if elapsed > 3.0:  # 10s grace period for testing
                 print("❌ USER GONE TOO LONG.")
-                self.is_running = False  # Trigger logout
+                self.is_running = False
             else:
-                # Warning Text
-                cv2.putText(frame, f"LOCKING IN {2.0 - elapsed:.1f}s", (50, 240),
+                cv2.putText(frame, f"LOCKING IN {3.0 - elapsed:.1f}s", (50, 240),
                             cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 5)
 
     def _draw_hud(self, frame):
@@ -113,12 +165,13 @@ class SessionGuard:
         mins = int(max(0, self.balance_mins))
         secs = int((max(0, self.balance_mins) - mins) * 60)
 
-        # Black Box
-        cv2.rectangle(frame, (10, 10), (400, 110), (0, 0, 0), -1)
+        color = (0, 255, 0)  # Green
+        if self.balance_mins < 1.0:
+            color = (0, 0, 255)  # Red
 
-        # Text
+        cv2.rectangle(frame, (10, 10), (400, 110), (0, 0, 0), -1)
         cv2.putText(frame, f"TIME: {mins}:{secs:02d}", (20, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
         cv2.putText(frame, "[S] Settings  [Q] Logout", (20, 90),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
@@ -145,13 +198,14 @@ class SessionGuard:
         if new_name:
             self.user['username'] = new_name
 
-        # Restart loop timing to avoid massive deduction
         cap.open(0)
         self.last_loop = time.time()
 
     def _final_sync(self):
+        """Syncs the last bit of time used before exiting."""
         if not self.is_admin:
             elapsed = time.time() - self.last_sync
-            self.net.send_request("DEDUCT_TIME", {
-                "username": self.user['username'], "seconds": elapsed
-            })
+            if elapsed > 0:
+                self.net.send_request("DEDUCT_TIME", {
+                    "username": self.user['username'], "seconds": elapsed
+                })

@@ -120,8 +120,11 @@ class DatabaseManager:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
 
-            # Matches your 'password' column
-            sql = "SELECT * FROM users WHERE username = %s AND password = %s"
+            # FORCE CASE SENSITIVITY FOR PASSWORD
+            # We use 'BINARY' to ensure 'Pass' != 'pass'
+            # (Username can stay case-insensitive if you prefer, or add BINARY there too)
+            sql = "SELECT * FROM users WHERE username = %s AND BINARY password = %s"
+
             cursor.execute(sql, (username, password))
             user = cursor.fetchone()
             conn.close()
