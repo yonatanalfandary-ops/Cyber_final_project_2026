@@ -62,15 +62,26 @@ class RentalServer:
                     user = self.db.authenticate_user_login(username, password)
 
                     if user:
-                        self.db.activate_station(station_id)
-                        response = {
-                            "status": "SUCCESS",
-                            "username": user['username'],
-                            "role": user['role'],
-                            "time_balance": user['time_balance'],
-                            "face_encoding": user['face_encoding']
-                        }
-                        print(f"✅ User '{username}' logged in at {station_id}")
+                        # --- NEW SECURITY CHECK ---
+                        # If not Root, REQUIRE Face ID
+                        if user['role'] != 'root' and not user['face_encoding']:
+                            print(f"⛔ Login Denied for {username}: No Face ID found.")
+                            response = {
+                                "status": "DENIED",
+                                "message": "Face ID Required. Ask Admin to set it up."
+                            }
+
+                        else:
+                            # Proceed with Login
+                            self.db.activate_station(station_id)
+                            response = {
+                                "status": "SUCCESS",
+                                "username": user['username'],
+                                "role": user['role'],
+                                "time_balance": user['time_balance'],
+                                "face_encoding": user['face_encoding']
+                            }
+                            print(f"✅ User '{username}' logged in at {station_id}")
                     else:
                         response = {"status": "FAIL", "message": "Invalid Username or Password"}
 
