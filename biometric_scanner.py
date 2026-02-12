@@ -2,57 +2,105 @@ import cv2
 import face_recognition
 import numpy as np
 import time
+import tkinter as tk
 
 
 class BiometricScanner:
     def __init__(self):
         pass
 
-    def quick_face_scan(self, active_users):
+    def quick_face_scan(self, active_users, timeout=5):
         """
-        Scans for 3 seconds to find a match among active_users.
-        Returns the user dict if found, else None.
+        Scans for a face from the list of 'active_users' for 'timeout' seconds.
+        Displays a borderless camera feed centered on screen (cannot be closed/minimized).
         """
-        if not active_users: return None
+        if not active_users:
+            return None
 
+        # --- OPTIMIZATION: Pre-load face data ---
+        known_encodings = []
+        known_users = []
+
+        for user in active_users:
+            if user.get('face_encoding'):
+                encodings = [np.array(e) for e in user['face_encoding']]
+                known_encodings.extend(encodings)
+                known_users.extend([user] * len(encodings))
+
+        if not known_encodings:
+            return None
+
+        # --- SETUP WINDOW ---
+        root = tk.Tk()
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        root.destroy()
+
+        win_w, win_h = 640, 480
+        x_pos = (screen_width - win_w) // 2
+        y_pos = (screen_height - win_h) // 2
+
+        window_name = "Face Scanner"
+
+        # 1. Create Window
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+
+        # 2. Remove Title Bar & Borders (This hides X and - buttons)
+        cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
+        # 3. Force it back to our desired size (640x480) and position
+        # Because we set FULLSCREEN, we must resize it *after* to make it a "borderless window"
+        cv2.resizeWindow(window_name, win_w, win_h)
+        cv2.moveWindow(window_name, x_pos, y_pos)
+
+        # 4. Force Topmost (Stays on top of everything)
+        cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
+
+        # --- START CAMERA ---
         print(f"👀 Scanning for {len(active_users)} active users...")
         cap = cv2.VideoCapture(0)
         start_time = time.time()
         found_user = None
 
-        while time.time() - start_time < 3.0:
+        while (time.time() - start_time) < timeout:
             ret, frame = cap.read()
             if not ret: break
 
-            # 1. Resize for performance
-            small = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
-            rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
-            face_encs = face_recognition.face_encodings(rgb)
+            # --- FACE RECOGNITION ---
+            small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+            rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
 
-            # 2. Check for matches
-            for unknown_face in face_encs:
-                for user in active_users:
-                    if not user.get('face_encoding'): continue
+            face_locations = face_recognition.face_locations(rgb_small_frame)
+            face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
 
-                    # Convert list of lists to list of numpy arrays
-                    known_faces = [np.array(e) for e in user['face_encoding']]
+            for face_encoding in face_encodings:
+                matches = face_recognition.compare_faces(known_encodings, face_encoding, tolerance=0.5)
 
-                    matches = face_recognition.compare_faces(known_faces, unknown_face, tolerance=0.6)
-                    if True in matches:
-                        found_user = user
-                        break
-                if found_user: break
+                if True in matches:
+                    first_match_index = matches.index(True)
+                    found_user = known_users[first_match_index]
 
-            # 3. UI Feedback (Show the user they are being scanned)
-            cv2.putText(frame, "Scanning...", (20, 50),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            cv2.imshow('Biometric Scan', frame)
+                    # --- SUCCESS FEEDBACK ---
+                    height, width, _ = frame.shape
+                    text = f"WELCOME {found_user['username']}!"
+                    text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 1.2, 3)[0]
+                    text_x = (width - text_size[0]) // 2
+                    text_y = (height + text_size[1]) // 2
 
-            # Required for the window to update
-            if cv2.waitKey(1) & 0xFF == 27:  # Allow ESC to cancel early
-                break
+                    cv2.putText(frame, text, (text_x, text_y),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+
+                    cv2.imshow(window_name, frame)
+                    cv2.waitKey(1000)
+                    break
 
             if found_user:
+                break
+
+            cv2.imshow(window_name, frame)
+
+            # Allow ESC to cancel (hidden feature for you/admin)
+            if cv2.waitKey(1) & 0xFF == 27:
                 break
 
         # Cleanup
