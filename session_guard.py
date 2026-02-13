@@ -162,24 +162,23 @@ class SessionGuard:
     def _check_low_time(self):
         """Triggered when time < 1 minute."""
         self.warning_shown = True
-        self.is_paused = True
+        self.is_paused = True  # Stops the timer deduction
 
-        # Temporary lift 'topmost' so the popup is visible and interactable
-        self.root.attributes("-topmost", False)
+        # 1. Ask using the HUD as parent
+        ans = messagebox.askyesno("Low Time", "Less than 1 minute left! Add time?", parent=self.root)
 
-        ans = messagebox.askyesno("Low Time", "You have less than 1 minute! Add more time?")
         if ans:
+            # 2. Pass self.root as the parent to RentWindow
             renter = RentWindow(self.net, self.user['username'])
-            added = renter.show()  # This blocks until RentWindow closes
-            if added > 0:
-                # Sync local balance with the new DB value
-                self._sync_balance_from_server()
-                self.warning_shown = False  # Allow the warning to trigger again later
+            added = renter.show(parent=self.root)  # This blocks here until window closes
 
+            if added > 0:
+                self._sync_balance_from_server()
+                self.warning_shown = False  # Allow warning to trigger again later
+
+        # 3. Resume session logic
         self.is_paused = False
-        self.root.attributes("-topmost", True)
-        # Force a refresh of the HUD loop in case it got stuck
-        self.root.after(100, self._update_hud_loop)
+        print("▶ Session Resumed")
 
     def _sync_balance_from_server(self):
         """Fetches the actual balance from DB to ensure Client/Server sync."""

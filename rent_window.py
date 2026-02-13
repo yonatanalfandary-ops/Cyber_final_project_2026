@@ -10,18 +10,20 @@ class RentWindow:
         self.root = None
         self.price_per_min = 0.50  # CONFIG: $0.50 per minute
 
-    def show(self):
-        """Displays the window and returns the minutes added (or 0 if cancelled)."""
-        self.root = tk.Tk()
+    def show(self, parent=None):
+        """Displays the window and returns the minutes added."""
+        # --- STRUCTURAL FIX: Use Toplevel if called from HUD ---
+        if parent:
+            self.root = tk.Toplevel(parent)
+            self.root.grab_set() # Focus stays on this window
+        else:
+            self.root = tk.Tk()
 
-        # --- FULLSCREEN KIOSK MODE ---
         self.root.attributes('-fullscreen', True)
         self.root.attributes('-topmost', True)
-        # -----------------------------
-
         self.root.configure(bg="#2c3e50")
 
-        # --- CENTERED CONTENT FRAME ---
+        # --- RESTORED ORIGINAL LAYOUT ---
         content_frame = tk.Frame(self.root, bg="#2c3e50")
         content_frame.place(relx=0.5, rely=0.5, anchor="center")
 
@@ -55,10 +57,9 @@ class RentWindow:
         tk.Button(content_frame, text="PAY & UNLOCK", font=("Arial", 18, "bold"),
                   bg="#27ae60", fg="white", width=20, command=self.process_payment).pack(pady=5)
 
-        # --- NEW SETTINGS BUTTON ---
+        # Settings Button
         tk.Button(content_frame, text="Account Settings", command=self.open_settings,
                   font=("Arial", 12), bg="#3498db", fg="white").pack(pady=10)
-        # ---------------------------
 
         # Cancel Button
         tk.Button(content_frame, text="Cancel", command=self.close,
@@ -66,21 +67,23 @@ class RentWindow:
 
         self.entry_mins.focus_set()
 
-        self.root.mainloop()
+        # --- STRUCTURAL FIX: Handle mainloop correctly ---
+        if parent:
+            # Wait for this window to close without starting a new mainloop
+            parent.wait_window(self.root)
+        else:
+            self.root.mainloop()
+
         return self.added_time
 
     def open_settings(self):
         self.root.withdraw()
-
-        # Pass True because we want the "Back to Payment" button
+        # Pass self.root as the parent so settings doesn't crash either
         settings = SettingsWindow(self.net, self.username, self.root, from_payment=True)
-
         updated_username = settings.show()
 
-        # If the user actually changed their name (didn't just close the window)
         if updated_username:
             self.username = updated_username
-            # Update the text on the screen
             self.lbl_welcome.config(text=f"Hello, {self.username}")
 
         self.root.deiconify()
@@ -100,7 +103,7 @@ class RentWindow:
             mins = int(text)
             cost = mins * self.price_per_min
             self.lbl_price.config(text=f"Total: ${cost:.2f}")
-        except ValueError:
+        except:
             self.lbl_price.config(text="Total: $0.00")
 
     def process_payment(self):
@@ -112,21 +115,23 @@ class RentWindow:
 
             cost = minutes * self.price_per_min
 
-            confirm = messagebox.askyesno("Confirm Payment", f"Charge card ${cost:.2f} for {minutes} mins?")
+            # --- POPUP FIX: parent=self.root ---
+            confirm = messagebox.askyesno("Confirm Payment",
+                                          f"Charge card ${cost:.2f} for {minutes} mins?",
+                                          parent=self.root)
             if not confirm: return
 
-            print(f"💳 Processing payment: ${cost:.2f} for {minutes} mins...")
             response = self.net.send_request("ADD_TIME", {
                 "username": self.username,
                 "minutes": minutes
             })
 
-            if response.get("status") == "SUCCESS":
-                messagebox.showinfo("Success", "Payment Accepted! Unlocking station...")
+            if response and response.get("status") == "SUCCESS":
+                messagebox.showinfo("Success", "Payment Accepted!", parent=self.root)
                 self.added_time = minutes
                 self.root.destroy()
             else:
-                messagebox.showerror("Error", "Transaction Failed. Try again.")
+                messagebox.showerror("Error", "Transaction Failed.", parent=self.root)
 
         except ValueError:
             pass
