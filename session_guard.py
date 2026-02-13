@@ -3,6 +3,7 @@ import time
 import numpy as np
 import face_recognition
 import tkinter as tk
+from threading import Thread
 from tkinter import messagebox
 from settings_window import SettingsWindow
 from rent_window import RentWindow
@@ -19,193 +20,188 @@ class SessionGuard:
         self.balance_mins = float(self.user.get('time_balance', 0))
         self.grace_start = None
         self.last_sync = time.time()
-        self.last_loop = time.time()
 
-        # Warning Flag
+        # Warning State
         self.warning_shown = False
+        self.is_paused = False
 
-        # Face Data (Pre-load for performance)
+        # Face Data
         self.known_faces = []
         if self.user.get('face_encoding'):
             self.known_faces = [np.array(e) for e in self.user['face_encoding']]
 
+        # UI Components
+        self.root = None
+        self.lbl_time = None
+
     def start(self):
-        """Starts the session loop. Returns updated user data on exit."""
-        cap = cv2.VideoCapture(0)
+        """Starts the background monitor and the Mini-HUD."""
         print(f"--- SESSION STARTED: {self.user['username']} ---")
 
-        # Reset timer base
-        self.last_loop = time.time()
+        # 1. Start the Background Camera Thread
+        camera_thread = Thread(target=self._background_monitor, daemon=True)
+        camera_thread.start()
 
-        while self.is_running:
-            ret, frame = cap.read()
-            if not ret: break
+        # 2. Start the Mini-Toolbar UI (Main Thread)
+        self._create_hud()
 
-            # 1. Update State (Timer & Sync)
-            # We pass 'cap' so we can pause/release it if we need to show a popup
-            if not self._update_time_logic(cap):
-                break  # Time expired
+        # Cleanup when HUD closes
+        self.is_running = False
+        return None
 
-            # 2. Check Security (Face Scan)
-            if not self.is_admin:
-                self._check_biometrics(frame)
+    def _create_hud(self):
+        self.root = tk.Tk()
+        self.root.title("Session Guard")
 
-            # 3. Draw UI
-            self._draw_hud(frame)
-            cv2.imshow("Security Monitor", frame)
+        # UI Styling: Bottom Right Position
+        width, height = 250, 80
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        self.root.geometry(f"{width}x{height}+{screen_w - width - 20}+{screen_h - height - 60}")
 
-            # 4. Handle Inputs
-            self._handle_input(cap)
+        self.root.overrideredirect(True)
+        self.root.attributes("-topmost", True)
+        self.root.configure(bg="#1e1e1e")
 
-        # Cleanup
-        cap.release()
-        cv2.destroyAllWindows()
+        # Time Label
+        self.lbl_time = tk.Label(self.root, text="TIME: 00:00", font=("Arial", 14, "bold"),
+                                 bg="#1e1e1e", fg="#00ff00")
+        self.lbl_time.pack(pady=5)
 
-        # Final Sync (This is the method that was missing!)
-        self._final_sync()
+        # Buttons
+        btn_frame = tk.Frame(self.root, bg="#1e1e1e")
+        btn_frame.pack()
 
-        return self.user
+        tk.Button(btn_frame, text="⚙ Settings", command=self._open_settings,
+                  bg="#34495e", fg="white", font=("Arial", 9)).pack(side="left", padx=5)
 
-    def _update_time_logic(self, cap):
-        """Calculates time deduction and server sync."""
-        if self.is_admin: return True
+        tk.Button(btn_frame, text="Logout [Q]", command=self._logout,
+                  bg="#c0392b", fg="white", font=("Arial", 9)).pack(side="left", padx=5)
 
-        current_time = time.time()
-        dt = current_time - self.last_loop
-        self.last_loop = current_time
+        self.root.bind('q', lambda e: self._logout())
+        self.root.bind('s', lambda e: self._open_settings())
 
-        # Local countdown
-        self.balance_mins -= (dt / 60.0)
+        self._update_hud_loop()
+        self.root.mainloop()
 
-        # --- RE-ARM WARNING ---
-        if self.balance_mins > 1.0:
-            self.warning_shown = False
+    def _update_hud_loop(self):
+        if not self.is_running:
+            return
 
-        # --- TRIGGER WARNING ---
-        if not self.warning_shown and 0 < self.balance_mins <= 1.0:
-            self.warning_shown = True
-            self._show_warning_popup(cap)
+        if not self.is_paused and not self.is_admin:
+            # 1. Deduct Local Time (1 second)
+            self.balance_mins -= (1 / 60)
 
-        # Server Sync (Every 5s)
-        if current_time - self.last_sync >= 5:
-            deduct = current_time - self.last_sync
-            self.net.send_request("DEDUCT_TIME", {
-                "username": self.user['username'], "seconds": deduct
-            })
-            self.last_sync = current_time
+            # 2. Sync with server every 5 seconds (FIXED: key 'seconds')
+            if time.time() - self.last_sync >= 5:
+                self.net.send_request("DEDUCT_TIME", {
+                    "username": self.user['username'],
+                    "seconds": 5
+                })
+                self.last_sync = time.time()
 
-        if self.balance_mins <= 0:
-            print("❌ TIME EXPIRED!")
-            return False
-        return True
+        # 3. Update Label Display
+        mins = max(0, int(self.balance_mins))
+        secs = max(0, int((self.balance_mins * 60) % 60))
+        self.lbl_time.config(text=f"TIME: {mins:02d}:{secs:02d}")
 
-    def _show_warning_popup(self, cap):
-        """Pauses camera, asks to add time, and handles the result."""
-        # 1. Pause Camera
-        cap.release()
-        cv2.destroyAllWindows()
-
-        # 2. Create hidden root for the popup
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-
-        # 3. Ask the User
-        choice = messagebox.askyesno(
-            "Time Low",
-            "⚠ You have less than 1 minute left!\n\nDo you want to add more time?",
-            parent=root
-        )
-
-        # 4. Handle "Yes"
-        if choice:
-            root.destroy()
-            rent = RentWindow(self.net, self.user['username'])
-            minutes_added = rent.show()
-
-            if minutes_added > 0:
-                print(f"💰 User added {minutes_added} minutes.")
-                self.balance_mins += minutes_added
+        # 4. Color Logic & Warning Trigger
+        if self.balance_mins <= 1.0:
+            self.lbl_time.config(fg="#ff4d4d")  # Red
+            if not self.warning_shown and not self.is_paused and not self.is_admin:
+                self._check_low_time()
         else:
-            root.destroy()
+            self.lbl_time.config(fg="#00ff00")  # Green
+            self.warning_shown = False  # Reset flag if time was added
 
-        # 5. Restart Camera & Timer
-        cap.open(0)
-        self.last_loop = time.time()
+        # 5. Check Expired
+        if self.balance_mins <= 0 and not self.is_admin:
+            self._logout("Time Expired!")
+            return
 
-    def _check_biometrics(self, frame):
-        """Verifies if the user is present."""
-        small = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
-        rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
+        # Schedule next update
+        self.root.after(1000, self._update_hud_loop)
 
-        match_found = False
-        if self.known_faces:
-            face_encs = face_recognition.face_encodings(rgb)
-            for enc in face_encs:
-                matches = face_recognition.compare_faces(self.known_faces, enc, tolerance=0.6)
+    def _background_monitor(self):
+        """Headless face recognition loop."""
+        cap = cv2.VideoCapture(0)
+        while self.is_running:
+            if self.is_paused or self.is_admin:
+                time.sleep(0.5)
+                continue
+
+            ret, frame = cap.read()
+            if not ret: continue
+
+            small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
+            rgb_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+
+            face_locations = face_recognition.face_locations(rgb_frame)
+            face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
+
+            found = False
+            for face_encoding in face_encodings:
+                matches = face_recognition.compare_faces(self.known_faces, face_encoding, tolerance=0.5)
                 if True in matches:
-                    match_found = True
+                    found = True
                     break
 
-        if match_found:
-            self.grace_start = None
-        else:
-            if self.grace_start is None: self.grace_start = time.time()
-
-            elapsed = time.time() - self.grace_start
-            if elapsed > 3.0:  # 10s grace period for testing
-                print("❌ USER GONE TOO LONG.")
-                self.is_running = False
+            if found:
+                self.grace_start = None
             else:
-                cv2.putText(frame, f"LOCKING IN {3.0 - elapsed:.1f}s", (50, 240),
-                            cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 5)
+                if self.grace_start is None:
+                    self.grace_start = time.time()
 
-    def _draw_hud(self, frame):
-        """Draws the interface overlay."""
-        mins = int(max(0, self.balance_mins))
-        secs = int((max(0, self.balance_mins) - mins) * 60)
-
-        color = (0, 255, 0)  # Green
-        if self.balance_mins < 1.0:
-            color = (0, 0, 255)  # Red
-
-        cv2.rectangle(frame, (10, 10), (400, 110), (0, 0, 0), -1)
-        cv2.putText(frame, f"TIME: {mins}:{secs:02d}", (20, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
-        cv2.putText(frame, "[S] Settings  [Q] Logout", (20, 90),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
-    def _handle_input(self, cap):
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord('q') or key == 27:
-            self.is_running = False
-        elif key == ord('s'):
-            self._open_settings(cap)
-
-    def _open_settings(self, cap):
-        """Pauses OpenCV to open Tkinter settings."""
+                if time.time() - self.grace_start > 3:
+                    print("⚠️ SECURITY VIOLATION: Face Lost")
+                    self.is_running = False
+                    self.root.after(0, self._logout, "Security: User Left")
+            time.sleep(0.1)
         cap.release()
-        cv2.destroyAllWindows()
 
-        temp = tk.Tk()
-        temp.withdraw()
+    def _check_low_time(self):
+        """Triggered when time < 1 minute."""
+        self.warning_shown = True
+        self.is_paused = True
 
-        settings = SettingsWindow(self.net, self.user['username'], temp)
-        new_name = settings.show()
+        # Temporary lift 'topmost' so the popup is visible and interactable
+        self.root.attributes("-topmost", False)
 
-        temp.destroy()
+        ans = messagebox.askyesno("Low Time", "You have less than 1 minute! Add more time?")
+        if ans:
+            renter = RentWindow(self.net, self.user['username'])
+            added = renter.show()  # This blocks until RentWindow closes
+            if added > 0:
+                # Sync local balance with the new DB value
+                self._sync_balance_from_server()
+                self.warning_shown = False  # Allow the warning to trigger again later
 
-        if new_name:
-            self.user['username'] = new_name
+        self.is_paused = False
+        self.root.attributes("-topmost", True)
+        # Force a refresh of the HUD loop in case it got stuck
+        self.root.after(100, self._update_hud_loop)
 
-        cap.open(0)
-        self.last_loop = time.time()
+    def _sync_balance_from_server(self):
+        """Fetches the actual balance from DB to ensure Client/Server sync."""
+        response = self.net.send_request("FETCH_ACTIVE_USERS")
+        if response and response.get("status") == "SUCCESS":
+            for u in response.get("users", []):
+                if u['username'] == self.user['username']:
+                    self.balance_mins = float(u['time_balance'])
+                    print(f"🔄 Sync Success: New Balance {self.balance_mins} mins")
+                    break
 
-    def _final_sync(self):
-        """Syncs the last bit of time used before exiting."""
-        if not self.is_admin:
-            elapsed = time.time() - self.last_sync
-            if elapsed > 0:
-                self.net.send_request("DEDUCT_TIME", {
-                    "username": self.user['username'], "seconds": elapsed
-                })
+    def _open_settings(self, event=None):
+        self.is_paused = True
+        self.root.attributes("-topmost", False)
+        settings = SettingsWindow(self.net, self.user['username'], self.root)
+        settings.show()
+        self.is_paused = False
+        self.root.attributes("-topmost", True)
+
+    def _logout(self, reason=None):
+        if reason:
+            messagebox.showinfo("Session Ended", reason)
+        self.is_running = False
+        if self.root:
+            self.root.destroy()
