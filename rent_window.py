@@ -103,7 +103,7 @@ class RentWindow:
             mins = int(text)
             cost = mins * self.price_per_min
             self.lbl_price.config(text=f"Total: ${cost:.2f}")
-        except:
+        except ValueError:
             self.lbl_price.config(text="Total: $0.00")
 
     def process_payment(self):

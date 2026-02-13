@@ -54,7 +54,7 @@ class SessionGuard:
         self.root.title("Session Guard")
 
         # UI Styling: Bottom Right Position
-        width, height = 250, 80
+        width, height = 250, 90  # Increased height slightly for better drag handle
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
         self.root.geometry(f"{width}x{height}+{screen_w - width - 20}+{screen_h - height - 60}")
@@ -63,14 +63,65 @@ class SessionGuard:
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#1e1e1e")
 
+        # --- DRAGGABILITY LOGIC ---
+        self._offset_x = 0
+        self._offset_y = 0
+
+        def _start_drag(event):
+            self._offset_x = event.x
+            self._offset_y = event.y
+
+        def _do_drag(event):
+            # Calculate the intended position
+            new_x = self.root.winfo_x() + event.x - self._offset_x
+            new_y = self.root.winfo_y() + event.y - self._offset_y
+
+            # Screen dimensions
+            sw = self.root.winfo_screenwidth()
+            sh = self.root.winfo_screenheight()
+
+            # HUD dimensions
+            ww = self.root.winfo_width()
+            wh = self.root.winfo_height()
+
+            snap_margin = 25  # Distance in pixels to trigger the snap
+
+            # --- Snap Logic ---
+            # Left/Right edges
+            if new_x < snap_margin:
+                new_x = 0
+            elif new_x > sw - ww - snap_margin:
+                new_x = sw - ww
+
+            # Top/Bottom edges
+            if new_y < snap_margin:
+                new_y = 0
+            elif new_y > sh - wh - snap_margin:
+                new_y = sh - wh
+
+            self.root.geometry(f"+{new_x}+{new_y}")
+
+        # Bind dragging to the main window
+        self.root.bind("<Button-1>", _start_drag)
+        self.root.bind("<B1-Motion>", _do_drag)
+        # ---------------------------
+
         # Time Label
         self.lbl_time = tk.Label(self.root, text="TIME: 00:00", font=("Arial", 14, "bold"),
                                  bg="#1e1e1e", fg="#00ff00")
         self.lbl_time.pack(pady=5)
 
+        # Also bind dragging to the label so clicking the text works too
+        self.lbl_time.bind("<Button-1>", _start_drag)
+        self.lbl_time.bind("<B1-Motion>", _do_drag)
+
+        # Subtle Drag Handle Hint
+        tk.Label(self.root, text="⋮⋮ DRAG TO REPOSITION ⋮⋮", font=("Arial", 7),
+                 bg="#1e1e1e", fg="#444444").pack()
+
         # Buttons
         btn_frame = tk.Frame(self.root, bg="#1e1e1e")
-        btn_frame.pack()
+        btn_frame.pack(pady=5)
 
         tk.Button(btn_frame, text="⚙ Settings", command=self._open_settings,
                   bg="#34495e", fg="white", font=("Arial", 9)).pack(side="left", padx=5)
