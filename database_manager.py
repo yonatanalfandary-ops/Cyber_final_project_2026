@@ -1,4 +1,5 @@
 import mysql.connector
+from mysql.connector import errorcode
 import json
 import uuid
 from datetime import datetime
@@ -84,6 +85,8 @@ class DatabaseManager:
             conn.commit()
             return True, "User created"
         except mysql.connector.Error as err:
+            if err.errno == errorcode.ER_DUP_ENTRY:
+                return False, "Username already exists!"
             return False, str(err)
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
