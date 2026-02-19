@@ -151,19 +151,20 @@ class SessionGuard:
                 })
                 self.last_sync = time.time()
 
-        # 3. Update Label Display
-        mins = max(0, int(self.balance_mins))
-        secs = max(0, int((self.balance_mins * 60) % 60))
-        self.lbl_time.config(text=f"TIME: {mins:02d}:{secs:02d}")
+        # 3. Update Label Display (Skip if we are counting down to logout)
+        if not getattr(self, '_is_logging_out', False):
+            mins = max(0, int(self.balance_mins))
+            secs = max(0, int((self.balance_mins * 60) % 60))
+            self.lbl_time.config(text=f"TIME: {mins:02d}:{secs:02d}")
 
-        # 4. Color Logic & Warning Trigger
-        if self.balance_mins <= 1.0:
-            self.lbl_time.config(fg="#ff4d4d")  # Red
-            if not self.warning_shown and not self.is_paused and not self.is_admin:
-                self._check_low_time()
-        else:
-            self.lbl_time.config(fg="#00ff00")  # Green
-            self.warning_shown = False  # Reset flag if time was added
+            # 4. Color Logic & Warning Trigger (Also put this inside the if statement)
+            if self.balance_mins <= 1.0:
+                self.lbl_time.config(fg="#ff4d4d")  # Red
+                if not self.warning_shown and not self.is_paused and not self.is_admin:
+                    self._check_low_time()
+            else:
+                self.lbl_time.config(fg="#00ff00")  # Green
+                self.warning_shown = False
 
         # 5. Check Expired
         if self.balance_mins <= 0 and not self.is_admin:
@@ -249,9 +250,85 @@ class SessionGuard:
         self.is_paused = False
         self.root.attributes("-topmost", True)
 
-    def _logout(self, reason=None):
+    def _logout(self, reason=None, event=None):
+        """Complex Logout Logic: Yes/No/Cancel with time penalty for pausing."""
+        # If forced logout with a reason (e.g., time expired), bypass the popup
         if reason:
-            messagebox.showinfo("Session Ended", reason)
+            self._execute_logout(reason)
+            return
+
+        # Prevent multiple popups from opening
+        if getattr(self, '_is_logging_out', False):
+            return
+        self._is_logging_out = True
+
+        # 1. Pause the visual countdown and drop the window slightly so the popup shows
+        was_paused = self.is_paused
+        self.is_paused = True
+        self.root.attributes("-topmost", False)
+
+        # Start tracking time
+        start_time = time.time()
+
+        # 2. Show the Yes/No/Cancel Warning
+        ans = messagebox.askyesnocancel(
+            "Logout Warning",
+            "Have you closed all your applications?",
+            parent=self.root
+        )
+
+        # Calculate exactly how long they spent looking at the popup
+        elapsed_seconds = time.time() - start_time
+
+        # 3. Handle the choices
+        if ans is True:
+            # YES -> Logout Immediately
+            self._execute_logout()
+
+        elif ans is False:
+            # NO -> Start 10-second countdown, then force logout
+            self._deduct_popup_time(elapsed_seconds)  # Don't give them free time for deciding
+            self.root.attributes("-topmost", True)
+            self._start_force_logout_countdown(10)
+
+        else:
+            # CANCEL (None) -> Resume Session and penalize the time spent
+            self._deduct_popup_time(elapsed_seconds)
+            self._is_logging_out = False
+            self.is_paused = was_paused
+            self.root.attributes("-topmost", True)
+
+    def _deduct_popup_time(self, elapsed_seconds):
+        """Deducts the time spent in the popup to prevent free pause time."""
+        if self.is_admin:
+            return
+
+        # Deduct locally (convert seconds to minutes for the UI balance)
+        self.balance_mins -= (elapsed_seconds / 60)
+
+        # Immediately sync this deduction to the database
+        self.net.send_request("DEDUCT_TIME", {
+            "username": self.user['username'],
+            "seconds": elapsed_seconds
+        })
+
+    def _start_force_logout_countdown(self, seconds_left):
+        """Locks the UI and counts down 10 seconds before force quitting."""
+        if seconds_left <= 0:
+            self._execute_logout()
+            return
+
+        # Update the HUD to show the urgency
+        self.lbl_time.config(text=f"CLOSING IN {seconds_left}s...", fg="red")
+
+        # Call this function again after 1000ms (1 second)
+        self.root.after(1000, lambda: self._start_force_logout_countdown(seconds_left - 1))
+
+    def _execute_logout(self, reason=None):
+        """The actual code that destroys the window and ends the session."""
+        if reason:
+            messagebox.showinfo("Session Ended", reason, parent=self.root)
+
         self.is_running = False
         if self.root:
             self.root.destroy()
