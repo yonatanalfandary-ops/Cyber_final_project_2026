@@ -45,15 +45,14 @@ class BiometricScanner:
         # 1. Create Window
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
-        # 2. Remove Title Bar & Borders (This hides X and - buttons)
+        # 2. Remove Title Bar & Borders
         cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
         # 3. Force it back to our desired size (640x480) and position
-        # Because we set FULLSCREEN, we must resize it *after* to make it a "borderless window"
         cv2.resizeWindow(window_name, win_w, win_h)
         cv2.moveWindow(window_name, x_pos, y_pos)
 
-        # 4. Force Topmost (Stays on top of everything)
+        # 4. Force Topmost
         cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
 
         # --- START CAMERA ---
@@ -99,11 +98,83 @@ class BiometricScanner:
 
             cv2.imshow(window_name, frame)
 
-            # Allow ESC to cancel (hidden feature for you/admin)
             if cv2.waitKey(1) & 0xFF == 27:
                 break
 
-        # Cleanup
         cap.release()
         cv2.destroyAllWindows()
         return found_user
+
+    def scan_specific_user(self, target_user, timeout=5):
+        """
+        Scans and compares the face ONLY against the provided target_user's encoding.
+        Returns True if matched, False otherwise.
+        """
+        if not target_user or not target_user.get('face_encoding'):
+            return False
+
+        known_encodings = [np.array(e) for e in target_user['face_encoding']]
+
+        # --- SETUP WINDOW ---
+        root = tk.Tk()
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        root.destroy()
+
+        win_w, win_h = 640, 480
+        x_pos = (screen_width - win_w) // 2
+        y_pos = (screen_height - win_h) // 2
+        window_name = "Face Verification"
+
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        cv2.resizeWindow(window_name, win_w, win_h)
+        cv2.moveWindow(window_name, x_pos, y_pos)
+        cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
+
+        # --- START CAMERA ---
+        print(f"🎯 Verifying face for: {target_user['username']}...")
+        cap = cv2.VideoCapture(0)
+        start_time = time.time()
+        matched = False
+
+        while (time.time() - start_time) < timeout:
+            ret, frame = cap.read()
+            if not ret: break
+
+            small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+            rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+
+            face_locations = face_recognition.face_locations(rgb_small_frame)
+            face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
+
+            for face_encoding in face_encodings:
+                # ONLY compare against the specific user's encodings
+                matches = face_recognition.compare_faces(known_encodings, face_encoding, tolerance=0.5)
+
+                if True in matches:
+                    matched = True
+                    # Success UI
+                    height, width, _ = frame.shape
+                    text = "MATCHED!"
+                    text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 1.2, 3)[0]
+                    cv2.putText(frame, text, ((width - text_size[0]) // 2, (height + text_size[1]) // 2),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+                    cv2.imshow(window_name, frame)
+                    cv2.waitKey(1000)
+                    break
+
+            if matched:
+                break
+
+            # Show target username on screen
+            cv2.putText(frame, f"Verifying: {target_user['username']}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+            cv2.imshow(window_name, frame)
+
+            if cv2.waitKey(1) & 0xFF == 27:  # ESC
+                break
+
+        cap.release()
+        cv2.destroyAllWindows()
+        return matched
