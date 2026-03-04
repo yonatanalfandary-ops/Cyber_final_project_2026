@@ -72,10 +72,16 @@ class MainClient:
 
         # --- 3. THE ROUTING (Face Check) ---
         if not target_user.get('face_encoding'):
-            # SCENARIO A: No Face Encoding (e.g., Master Admin)
-            print("⚠️ No face ID found. Routing to manual login.")
-            self.locker.reset_to_start("Face ID missing - enter as admin to create")
-            self.locker.root.after(2000, self._trigger_manual_login)
+            # Check if the user is an admin/root
+            if target_user.get('role') in ['root', 'admin']:
+                print("🛡️ Admin without face ID. Routing instantly to manual login.")
+                self.locker.reset_to_start("")  # Clear any old text just in case
+                self._trigger_manual_login()    # Go straight to password window
+            else:
+                # Regular user without face encoding
+                print("⚠️ No face ID found. Routing to manual login.")
+                self.locker.reset_to_start("Face ID missing - enter as admin to create")
+                self.locker.root.after(2000, self._trigger_manual_login)
             return
 
         # SCENARIO B: Has Face Encoding
@@ -88,8 +94,8 @@ class MainClient:
             print("✅ Face Matched!")
             balance = float(target_user.get('time_balance', 0))
 
-            if target_user['role'] == 'root' or balance > 0:
-                # MATCH + HAS TIME: Login instantly
+            if target_user['role'] in ['root', 'admin'] or balance > 0:
+                # MATCH + HAS TIME (or is Admin): Login instantly
                 self.current_user = target_user
                 self.locker.unlock()
             else:
@@ -97,9 +103,7 @@ class MainClient:
                 print("💰 Balance is 0. Opening Rent Window...")
                 renter = RentWindow(self.net, target_user['username'])
 
-                # --- THE FIX ---
                 # Safely capture the return value and convert it to a float
-                # to prevent the silent Tkinter string-comparison crash
                 raw_minutes = renter.show()
                 try:
                     minutes_added = float(raw_minutes if raw_minutes else 0)
@@ -121,7 +125,6 @@ class MainClient:
             print("🚫 Face match failed. Access Denied.")
             self.locker.root.deiconify()
             self.locker.reset_to_start("Face match failed. Access Denied.")
-
     def _trigger_manual_login(self):
         """Helper to unlock screen and open manual login."""
         self.locker.unlock()

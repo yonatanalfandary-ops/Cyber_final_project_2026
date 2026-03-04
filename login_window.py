@@ -28,7 +28,7 @@ class LoginWindow:
         content_frame.place(relx=0.5, rely=0.5, anchor="center")
 
         # Header
-        tk.Label(content_frame, text="SYSTEM LOCKED", font=("Arial", 30, "bold"),
+        tk.Label(content_frame, text="ADMIN LOGIN", font=("Arial", 30, "bold"),
                  bg="#2c3e50", fg="white").pack(pady=30)
 
         # Inputs
