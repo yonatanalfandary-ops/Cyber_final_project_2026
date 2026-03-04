@@ -56,8 +56,7 @@ class MainClient:
 
         # --- 2. THE USERNAME CHECK ---
         print(f"🔍 Checking database for user: {username}...")
-        # Note: Assuming your server has a FETCH_ALL_USERS or similar route to get user data.
-        response = self.net.send_request("FETCH_ACTIVE_USERS", {})
+        response = self.net.send_request("FETCH_ALL_USERS", {})
         target_user = None
 
         if response and response.get("users"):
@@ -67,28 +66,20 @@ class MainClient:
                     break
 
         if not target_user:
-            # NO: Show inline error and wait for them to try again
             print("❌ Username not found.")
             self.locker.reset_to_start("Username not found")
             return
-
-        # 👇 ADD THESE TWO LINES 👇
-        print(f"DEBUG: Found {target_user['username']}. Keys received from server:")
-        print(target_user.keys())
 
         # --- 3. THE ROUTING (Face Check) ---
         if not target_user.get('face_encoding'):
             # SCENARIO A: No Face Encoding (e.g., Master Admin)
             print("⚠️ No face ID found. Routing to manual login.")
             self.locker.reset_to_start("Face ID missing - enter as admin to create")
-
-            # Briefly show the message, then destroy the lock screen and show password window
             self.locker.root.after(2000, self._trigger_manual_login)
             return
 
         # SCENARIO B: Has Face Encoding
         print("📸 Face ID found. Starting targeted scan...")
-        # Hide the lock screen temporarily so we can see the camera
         self.locker.root.withdraw()
         match = self.scanner.scan_specific_user(target_user)
 
@@ -105,18 +96,28 @@ class MainClient:
                 # MATCH + NO TIME: Route to Rent Window
                 print("💰 Balance is 0. Opening Rent Window...")
                 renter = RentWindow(self.net, target_user['username'])
-                minutes_added = renter.show()
+
+                # --- THE FIX ---
+                # Safely capture the return value and convert it to a float
+                # to prevent the silent Tkinter string-comparison crash
+                raw_minutes = renter.show()
+                try:
+                    minutes_added = float(raw_minutes if raw_minutes else 0)
+                except (ValueError, TypeError):
+                    minutes_added = 0
 
                 if minutes_added > 0:
+                    print(f"✅ Rent successful! Adding {minutes_added} mins to session.")
+                    # Update local balance so SessionGuard knows how long to run
                     target_user['time_balance'] = minutes_added
                     self.current_user = target_user
-                    self.locker.unlock()
+                    self.locker.unlock()  # Unlocks and transitions to Session Guard!
                 else:
                     print("❌ Payment cancelled. Returning to Lock Screen.")
                     self.locker.root.deiconify()
                     self.locker.reset_to_start()
         else:
-            # NO MATCH: Face is wrong. Deny and reset instantly (No password fallback)
+            # NO MATCH
             print("🚫 Face match failed. Access Denied.")
             self.locker.root.deiconify()
             self.locker.reset_to_start("Face match failed. Access Denied.")
@@ -140,13 +141,34 @@ class MainClient:
             else:
                 print("💰 Balance is 0. Opening Rent Window...")
                 renter = RentWindow(self.net, user_data['username'])
-                minutes_added = renter.show()
+                renter.show() # Ignore the return value
 
-                if minutes_added > 0:
-                    user_data['time_balance'] = minutes_added
+                # --- Verify with the server if they actually bought time ---
+                print("🔄 Verifying new balance with server...")
+                check_resp = self.net.send_request("FETCH_ALL_USERS", {})
+                updated_balance = 0
+
+                if check_resp and check_resp.get("users"):
+                    for u in check_resp['users']:
+                        if u['username'] == user_data['username']:
+                            updated_balance = float(u.get('time_balance', 0))
+                            user_data = u  # Update local user data
+                            break
+
+                if updated_balance > 0:
+                    print(f"✅ Payment confirmed! New balance: {updated_balance}. Starting session...")
                     self.current_user = user_data
+                    # If called via lock screen trigger, unlock it here:
+                    if self.locker and self.locker.root:
+                        try:
+                            self.locker.unlock()
+                        except:
+                            pass
                 else:
-                    print("❌ Payment cancelled. Returning to Lock Screen.")
+                    print("❌ No time added (Payment cancelled). Returning to Lock Screen.")
+                    if self.locker and self.locker.root:
+                        self.locker.root.deiconify()
+                        self.locker.reset_to_start()
 
 
 if __name__ == "__main__":

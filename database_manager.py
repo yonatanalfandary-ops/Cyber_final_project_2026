@@ -107,8 +107,16 @@ class DatabaseManager:
         try:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT username, full_name, role, time_balance FROM users")
+
+            # ADDED face_encoding to the SQL query
+            cursor.execute("SELECT username, full_name, role, time_balance, face_encoding FROM users")
             users = cursor.fetchall()
+
+            # DECODE the face_encoding from JSON so the client can use it
+            for u in users:
+                if u.get('face_encoding'):
+                    u['face_encoding'] = json.loads(u['face_encoding'])
+
             return users
         except Exception as e:
             print(f"Error fetching users: {e}")

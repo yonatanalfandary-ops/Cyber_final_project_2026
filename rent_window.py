@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import messagebox
 from settings_window import SettingsWindow
 
+
 class RentWindow:
     def __init__(self, network_client, username):
         self.net = network_client
@@ -12,12 +13,13 @@ class RentWindow:
 
     def show(self, parent=None):
         """Displays the window and returns the minutes added."""
-        # --- STRUCTURAL FIX: Use Toplevel if called from HUD ---
+        # --- STRUCTURAL FIX: NEVER use tk.Tk() for a secondary window! ---
         if parent:
             self.root = tk.Toplevel(parent)
-            self.root.grab_set() # Focus stays on this window
         else:
-            self.root = tk.Tk()
+            self.root = tk.Toplevel()  # Automatically attaches to the main running Tk()
+
+        self.root.grab_set()  # Focus stays on this window
 
         self.root.attributes('-fullscreen', True)
         self.root.attributes('-topmost', True)
@@ -67,13 +69,11 @@ class RentWindow:
 
         self.entry_mins.focus_set()
 
-        # --- STRUCTURAL FIX: Handle mainloop correctly ---
-        if parent:
-            # Wait for this window to close without starting a new mainloop
-            parent.wait_window(self.root)
-        else:
-            self.root.mainloop()
+        # --- STRUCTURAL FIX: Wait for the window to be destroyed ---
+        self.root.wait_window()
 
+        # Once self.root.destroy() is called (in process_payment or close),
+        # the code resumes here and hands the time back to main_client!
         return self.added_time
 
     def open_settings(self):
