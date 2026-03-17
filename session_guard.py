@@ -14,6 +14,7 @@ class SessionGuard:
         self.net = network_client
         self.user = user_data
         self.is_running = True
+        self.exit_status = "LOGOUT"  # Defaults to full logout unless paused
 
         # Session State
         self.is_admin = (self.user.get('role') == 'root')
@@ -47,14 +48,18 @@ class SessionGuard:
 
         # Cleanup when HUD closes
         self.is_running = False
-        return None
+
+        # Save exact balance back to the user dictionary for when they resume!
+        self.user['time_balance'] = self.balance_mins
+
+        return self.exit_status
 
     def _create_hud(self):
         self.root = tk.Tk()
         self.root.title("Session Guard")
 
         # UI Styling: Bottom Right Position
-        width, height = 250, 90  # Increased height slightly for better drag handle
+        width, height = 250, 90
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
         self.root.geometry(f"{width}x{height}+{screen_w - width - 20}+{screen_h - height - 60}")
@@ -72,28 +77,18 @@ class SessionGuard:
             self._offset_y = event.y
 
         def _do_drag(event):
-            # Calculate the intended position
             new_x = self.root.winfo_x() + event.x - self._offset_x
             new_y = self.root.winfo_y() + event.y - self._offset_y
-
-            # Screen dimensions
             sw = self.root.winfo_screenwidth()
             sh = self.root.winfo_screenheight()
-
-            # HUD dimensions
             ww = self.root.winfo_width()
             wh = self.root.winfo_height()
+            snap_margin = 25
 
-            snap_margin = 25  # Distance in pixels to trigger the snap
-
-            # --- Snap Logic ---
-            # Left/Right edges
             if new_x < snap_margin:
                 new_x = 0
             elif new_x > sw - ww - snap_margin:
                 new_x = sw - ww
-
-            # Top/Bottom edges
             if new_y < snap_margin:
                 new_y = 0
             elif new_y > sh - wh - snap_margin:
@@ -101,7 +96,6 @@ class SessionGuard:
 
             self.root.geometry(f"+{new_x}+{new_y}")
 
-        # Bind dragging to the main window
         self.root.bind("<Button-1>", _start_drag)
         self.root.bind("<B1-Motion>", _do_drag)
         # ---------------------------
@@ -111,11 +105,9 @@ class SessionGuard:
                                  bg="#1e1e1e", fg="#00ff00")
         self.lbl_time.pack(pady=5)
 
-        # Also bind dragging to the label so clicking the text works too
         self.lbl_time.bind("<Button-1>", _start_drag)
         self.lbl_time.bind("<B1-Motion>", _do_drag)
 
-        # Subtle Drag Handle Hint
         tk.Label(self.root, text="⋮⋮ DRAG TO REPOSITION ⋮⋮", font=("Arial", 7),
                  bg="#1e1e1e", fg="#444444").pack()
 
@@ -136,14 +128,10 @@ class SessionGuard:
         self.root.mainloop()
 
     def _update_hud_loop(self):
-        if not self.is_running:
-            return
+        if not self.is_running: return
 
         if not self.is_paused and not self.is_admin:
-            # 1. Deduct Local Time (1 second)
             self.balance_mins -= (1 / 60)
-
-            # 2. Sync with server every 5 seconds (FIXED: key 'seconds')
             if time.time() - self.last_sync >= 5:
                 self.net.send_request("DEDUCT_TIME", {
                     "username": self.user['username'],
@@ -151,31 +139,26 @@ class SessionGuard:
                 })
                 self.last_sync = time.time()
 
-        # 3. Update Label Display (Skip if we are counting down to logout)
         if not getattr(self, '_is_logging_out', False):
             mins = max(0, int(self.balance_mins))
             secs = max(0, int((self.balance_mins * 60) % 60))
             self.lbl_time.config(text=f"TIME: {mins:02d}:{secs:02d}")
 
-            # 4. Color Logic & Warning Trigger (Also put this inside the if statement)
             if self.balance_mins <= 1.0:
-                self.lbl_time.config(fg="#ff4d4d")  # Red
+                self.lbl_time.config(fg="#ff4d4d")
                 if not self.warning_shown and not self.is_paused and not self.is_admin:
                     self._check_low_time()
             else:
-                self.lbl_time.config(fg="#00ff00")  # Green
+                self.lbl_time.config(fg="#00ff00")
                 self.warning_shown = False
 
-        # 5. Check Expired
         if self.balance_mins <= 0 and not self.is_admin:
             self._logout("Time Expired!")
             return
 
-        # Schedule next update
         self.root.after(1000, self._update_hud_loop)
 
     def _background_monitor(self):
-        """Headless face recognition loop."""
         cap = cv2.VideoCapture(0)
         while self.is_running:
             if self.is_paused or self.is_admin:
@@ -205,35 +188,28 @@ class SessionGuard:
                     self.grace_start = time.time()
 
                 if time.time() - self.grace_start > 3:
-                    print("⚠️ SECURITY VIOLATION: Face Lost")
+                    print("⏸️ User Left. Pausing Session...")
                     self.is_running = False
-                    self.root.after(0, self._logout, "Security: User Left")
+                    self.exit_status = "PAUSED"  # This tells main_client to lock, not logout!
+                    if self.root:
+                        self.root.after(0, self.root.destroy)
             time.sleep(0.1)
         cap.release()
 
     def _check_low_time(self):
-        """Triggered when time < 1 minute."""
         self.warning_shown = True
-        self.is_paused = True  # Stops the timer deduction
-
-        # 1. Ask using the HUD as parent
+        self.is_paused = True
         ans = messagebox.askyesno("Low Time", "Less than 1 minute left! Add time?", parent=self.root)
-
         if ans:
-            # 2. Pass self.root as the parent to RentWindow
             renter = RentWindow(self.net, self.user['username'])
-            added = renter.show(parent=self.root)  # This blocks here until window closes
-
+            added = renter.show(parent=self.root)
             if added > 0:
                 self._sync_balance_from_server()
-                self.warning_shown = False  # Allow warning to trigger again later
-
-        # 3. Resume session logic
+                self.warning_shown = False
         self.is_paused = False
         print("▶ Session Resumed")
 
     def _sync_balance_from_server(self):
-        """Fetches the actual balance from DB to ensure Client/Server sync."""
         response = self.net.send_request("FETCH_ACTIVE_USERS")
         if response and response.get("status") == "SUCCESS":
             for u in response.get("users", []):
@@ -251,84 +227,52 @@ class SessionGuard:
         self.root.attributes("-topmost", True)
 
     def _logout(self, reason=None, event=None):
-        """Complex Logout Logic: Yes/No/Cancel with time penalty for pausing."""
-        # If forced logout with a reason (e.g., time expired), bypass the popup
         if reason:
             self._execute_logout(reason)
             return
 
-        # Prevent multiple popups from opening
-        if getattr(self, '_is_logging_out', False):
-            return
+        if getattr(self, '_is_logging_out', False): return
         self._is_logging_out = True
 
-        # 1. Pause the visual countdown and drop the window slightly so the popup shows
         was_paused = self.is_paused
         self.is_paused = True
         self.root.attributes("-topmost", False)
-
-        # Start tracking time
         start_time = time.time()
 
-        # 2. Show the Yes/No/Cancel Warning
-        ans = messagebox.askyesnocancel(
-            "Logout Warning",
-            "Have you closed all your applications?",
-            parent=self.root
-        )
-
-        # Calculate exactly how long they spent looking at the popup
+        ans = messagebox.askyesnocancel("Logout Warning", "Have you closed all your applications?", parent=self.root)
         elapsed_seconds = time.time() - start_time
 
-        # 3. Handle the choices
         if ans is True:
-            # YES -> Logout Immediately
             self._execute_logout()
-
         elif ans is False:
-            # NO -> Start 10-second countdown, then force logout
-            self._deduct_popup_time(elapsed_seconds)  # Don't give them free time for deciding
+            self._deduct_popup_time(elapsed_seconds)
             self.root.attributes("-topmost", True)
             self._start_force_logout_countdown(10)
-
         else:
-            # CANCEL (None) -> Resume Session and penalize the time spent
             self._deduct_popup_time(elapsed_seconds)
             self._is_logging_out = False
             self.is_paused = was_paused
             self.root.attributes("-topmost", True)
 
     def _deduct_popup_time(self, elapsed_seconds):
-        """Deducts the time spent in the popup to prevent free pause time."""
-        if self.is_admin:
-            return
-
-        # Deduct locally (convert seconds to minutes for the UI balance)
+        if self.is_admin: return
         self.balance_mins -= (elapsed_seconds / 60)
-
-        # Immediately sync this deduction to the database
         self.net.send_request("DEDUCT_TIME", {
             "username": self.user['username'],
             "seconds": elapsed_seconds
         })
 
     def _start_force_logout_countdown(self, seconds_left):
-        """Locks the UI and counts down 10 seconds before force quitting."""
         if seconds_left <= 0:
             self._execute_logout()
             return
-
-        # Update the HUD to show the urgency
         self.lbl_time.config(text=f"CLOSING IN {seconds_left}s...", fg="red")
-
-        # Call this function again after 1000ms (1 second)
         self.root.after(1000, lambda: self._start_force_logout_countdown(seconds_left - 1))
 
     def _execute_logout(self, reason=None):
-        """The actual code that destroys the window and ends the session."""
         if reason:
             messagebox.showinfo("Session Ended", reason, parent=self.root)
-
         self.is_running = False
+        self.exit_status = "LOGOUT"
         if self.root:
             self.root.destroy()
