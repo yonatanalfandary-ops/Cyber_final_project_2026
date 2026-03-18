@@ -130,6 +130,7 @@ class SessionGuard:
     def _update_hud_loop(self):
         if not self.is_running: return
 
+        # 1. Deduct Time
         if not self.is_paused and not self.is_admin:
             self.balance_mins -= (1 / 60)
             if time.time() - self.last_sync >= 5:
@@ -139,12 +140,33 @@ class SessionGuard:
                 })
                 self.last_sync = time.time()
 
+        # 2. THE FIX: Catch the timeout immediately, force 00:00, and halt the loop
+        if self.balance_mins <= 0 and not self.is_admin:
+            self.lbl_time.config(text="TIME: 00:00", fg="#ff4d4d")
+            self.root.update()  # Force UI to draw the 00:00 before the popup blocks it
+
+            # --- NEW: The 'Kill Shot' Sync ---
+            # Send a massive deduction to the server right before shutting down.
+            # The server's GREATEST(0, ...) logic will force the database to exactly 0.
+            self.net.send_request("DEDUCT_TIME", {
+                "username": self.user['username'],
+                "seconds": 99999
+            })
+
+            self.is_running = False  # Stop background threads
+            self._logout("Time Expired!")
+            return  # Exit function so the 'after' loop doesn't trigger again
+
+        # 3. Safe UI Update for active sessions
         if not getattr(self, '_is_logging_out', False):
-            mins = max(0, int(self.balance_mins))
-            secs = max(0, int((self.balance_mins * 60) % 60))
+            # Clamp the math value so it never calculates a negative time
+            safe_balance = max(0.0, self.balance_mins)
+            mins = int(safe_balance)
+            secs = int((safe_balance * 60) % 60)
             self.lbl_time.config(text=f"TIME: {mins:02d}:{secs:02d}")
 
-            if self.balance_mins <= 1.0:
+            # Low Time Warning Check
+            if safe_balance <= 1.0:
                 self.lbl_time.config(fg="#ff4d4d")
                 if not self.warning_shown and not self.is_paused and not self.is_admin:
                     self._check_low_time()
@@ -152,10 +174,7 @@ class SessionGuard:
                 self.lbl_time.config(fg="#00ff00")
                 self.warning_shown = False
 
-        if self.balance_mins <= 0 and not self.is_admin:
-            self._logout("Time Expired!")
-            return
-
+        # 4. Schedule next tick
         self.root.after(1000, self._update_hud_loop)
 
     def _background_monitor(self):

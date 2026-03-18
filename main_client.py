@@ -90,9 +90,9 @@ class MainClient:
                 self.locker.reset_to_start("")
                 self._trigger_manual_login()
             else:
-                print("⚠️ No face ID found. Routing to manual login.")
-                self.locker.reset_to_start("Face ID missing - enter as admin to create")
-                self.locker.root.after(2000, self._trigger_manual_login)
+                print("⚠️ Standard user has no face ID. Blocking access.")
+                # --- THE FIX: Block standard users instead of routing them ---
+                self.locker.reset_to_start("No Face ID setup. Please see Admin.")
             return
 
         print("📸 Face ID found. Starting targeted scan...")
@@ -136,45 +136,23 @@ class MainClient:
         self.manual_login_sequence()
 
     def manual_login_sequence(self):
-        """Fallback for password login."""
+        """Admin fallback for password login."""
         login = LoginWindow(self.net, STATION_ID)
         user_data = login.show()
 
         if user_data:
             role = user_data.get('role')
-            balance = float(user_data.get('time_balance', 0))
 
-            if role == 'root' or balance > 0:
+            # --- THE FIX: Only allow Admins to proceed from this window ---
+            if role in ['root', 'admin']:
+                print(f"✅ Admin {user_data['username']} authenticated manually.")
                 self.current_user = user_data
             else:
-                print("💰 Balance is 0. Opening Rent Window...")
-                renter = RentWindow(self.net, user_data['username'])
-                renter.show()
-
-                print("🔄 Verifying new balance with server...")
-                check_resp = self.net.send_request("FETCH_ALL_USERS", {})
-                updated_balance = 0
-
-                if check_resp and check_resp.get("users"):
-                    for u in check_resp['users']:
-                        if u['username'] == user_data['username']:
-                            updated_balance = float(u.get('time_balance', 0))
-                            user_data = u
-                            break
-
-                if updated_balance > 0:
-                    print(f"✅ Payment confirmed! New balance: {updated_balance}. Starting session...")
-                    self.current_user = user_data
-                    if self.locker and self.locker.root:
-                        try:
-                            self.locker.unlock()
-                        except:
-                            pass
-                else:
-                    print("❌ No time added (Payment cancelled). Returning to Lock Screen.")
-                    if self.locker and self.locker.root:
-                        self.locker.root.deiconify()
-                        self.locker.reset_to_start()
+                # Fallback safeguard in case of a server glitch
+                print("❌ Access Denied: Standard users cannot use manual login.")
+                if self.locker and self.locker.root:
+                    self.locker.root.deiconify()
+                    self.locker.reset_to_start("Users must use Face ID.")
 
 
 if __name__ == "__main__":

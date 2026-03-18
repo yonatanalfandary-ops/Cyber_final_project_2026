@@ -71,6 +71,11 @@ class DatabaseManager:
     # --- USER MANAGEMENT ---
 
     def create_user(self, username, password, full_name, role):
+        # --- NEW LOGIC: Enforce Password Rules ---
+        # If it's a standard user, completely wipe the password before saving
+        if role == 'user':
+            password = None
+
         # Generate UUID manually to match your table
         new_id = str(uuid.uuid4())
         created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

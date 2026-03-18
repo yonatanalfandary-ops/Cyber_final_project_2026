@@ -53,7 +53,7 @@ class RentalServer:
 
                 response = {"status": "ERROR", "message": "Unknown Action"}
 
-                # CASE 1: User Login
+                # CASE 1: User Login (Admins Only)
                 if action == "LOGIN":
                     username = request.get("username")
                     password = request.get("password")
@@ -62,17 +62,15 @@ class RentalServer:
                     user = self.db.authenticate_user_login(username, password)
 
                     if user:
-                        # --- NEW SECURITY CHECK ---
-                        # If not Root, REQUIRE Face ID
-                        if user['role'] != 'root' and not user['face_encoding']:
-                            print(f"⛔ Login Denied for {username}: No Face ID found.")
+                        # --- NEW SECURITY CHECK: Enforce Biometric-Only for Users ---
+                        if user['role'] == 'user':
+                            print(f"⛔ Login Denied for {username}: Standard users must use Face ID.")
                             response = {
                                 "status": "DENIED",
-                                "message": "Face ID Required. Ask Admin to set it up."
+                                "message": "Standard users cannot use passwords. Please use Face ID."
                             }
-
                         else:
-                            # Proceed with Login
+                            # Proceed with Admin Login
                             self.db.activate_station(station_id)
                             response = {
                                 "status": "SUCCESS",
@@ -81,7 +79,7 @@ class RentalServer:
                                 "time_balance": user['time_balance'],
                                 "face_encoding": user['face_encoding']
                             }
-                            print(f"✅ User '{username}' logged in at {station_id}")
+                            print(f"✅ Admin '{username}' logged in at {station_id}")
                     else:
                         response = {"status": "FAIL", "message": "Invalid Username or Password"}
 
@@ -178,9 +176,12 @@ class RentalServer:
 
                 # CASE 9: Create User (Admin Panel)
                 elif action == "CREATE_USER":
+                    # Using .get() prevents server crashes if a key is missing from the payload
                     success, msg = self.db.create_user(
-                        request["username"], request["password"],
-                        request["full_name"], request["role"]
+                        request.get("username"),
+                        request.get("password"),
+                        request.get("full_name"),
+                        request.get("role", "user")  # Defaults to 'user' if missing
                     )
                     response = {"status": "SUCCESS" if success else "FAILURE", "message": msg}
 

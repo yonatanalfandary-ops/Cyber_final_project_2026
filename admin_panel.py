@@ -133,21 +133,83 @@ class AdminPanel:
         return self.users_cache[idx[0]]
 
     def create_user(self):
-        username = simpledialog.askstring("New User", "Username:", parent=self.root)
-        if not username: return
-        password = simpledialog.askstring("New User", "Password:", parent=self.root)
-        if not password: return
-        fullname = simpledialog.askstring("New User", "Full Name:", parent=self.root)
-        role = simpledialog.askstring("New User", "Role (user/root):", initialvalue="user", parent=self.root)
+        # --- 1. SETUP CUSTOM DIALOG ---
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Create New User")
+        dialog.geometry("350x450")
+        dialog.configure(bg="#34495e")
+        dialog.attributes('-topmost', True)
 
-        response = self.net.send_request("CREATE_USER", {
-            "username": username, "password": password, "full_name": fullname, "role": role
-        })
-        if response.get("status") == "SUCCESS":
-            messagebox.showinfo("Success", "User Created!")
-            self.fetch_users()
-        else:
-            messagebox.showerror("Error", response.get("message"))
+        # Center the dialog
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 175
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 225
+        dialog.geometry(f"+{x}+{y}")
+
+        tk.Label(dialog, text="Create New User", font=("Arial", 16, "bold"), bg="#34495e", fg="white").pack(pady=15)
+
+        # --- 2. VARIABLES & DYNAMIC LOGIC ---
+        username_var = tk.StringVar()
+        fullname_var = tk.StringVar()
+        password_var = tk.StringVar()
+        role_var = tk.StringVar(value="user")  # Default to user
+
+        def on_role_change(*args):
+            if role_var.get() == "user":
+                entry_pass.config(state="disabled")
+                password_var.set("")  # Clear password if they typed one
+            else:
+                entry_pass.config(state="normal")
+
+        role_var.trace_add("write", on_role_change)
+
+        # --- 3. UI ELEMENTS ---
+        tk.Label(dialog, text="Role:", bg="#34495e", fg="#bdc3c7").pack(anchor="w", padx=30)
+        role_frame = tk.Frame(dialog, bg="#34495e")
+        role_frame.pack(fill="x", padx=30, pady=5)
+        tk.Radiobutton(role_frame, text="Standard User", variable=role_var, value="user", bg="#34495e", fg="white",
+                       selectcolor="#2c3e50").pack(side="left")
+        tk.Radiobutton(role_frame, text="Admin (Root)", variable=role_var, value="root", bg="#34495e", fg="white",
+                       selectcolor="#2c3e50").pack(side="right")
+
+        tk.Label(dialog, text="Username:", bg="#34495e", fg="#bdc3c7").pack(anchor="w", padx=30, pady=(10, 0))
+        tk.Entry(dialog, textvariable=username_var, font=("Arial", 12)).pack(fill="x", padx=30, pady=5)
+
+        tk.Label(dialog, text="Full Name:", bg="#34495e", fg="#bdc3c7").pack(anchor="w", padx=30)
+        tk.Entry(dialog, textvariable=fullname_var, font=("Arial", 12)).pack(fill="x", padx=30, pady=5)
+
+        tk.Label(dialog, text="Password (Admins Only):", bg="#34495e", fg="#bdc3c7").pack(anchor="w", padx=30)
+        entry_pass = tk.Entry(dialog, textvariable=password_var, font=("Arial", 12), state="disabled", show="*")
+        entry_pass.pack(fill="x", padx=30, pady=5)
+
+        # --- 4. SUBMIT LOGIC ---
+        def submit():
+            user = username_var.get().strip()
+            full = fullname_var.get().strip()
+            pwd = password_var.get().strip()
+            rle = role_var.get()
+
+            if not user or not full:
+                messagebox.showerror("Error", "Username and Full Name are required.", parent=dialog)
+                return
+
+            if rle == "root" and not pwd:
+                messagebox.showerror("Error", "Admin accounts require a password.", parent=dialog)
+                return
+
+            # Send to server (If user, pwd will be ignored by DB logic, but we send it anyway)
+            response = self.net.send_request("CREATE_USER", {
+                "username": user, "password": pwd, "full_name": full, "role": rle
+            })
+
+            if response and response.get("status") == "SUCCESS":
+                messagebox.showinfo("Success", f"User '{user}' Created!", parent=self.root)
+                self.fetch_users()
+                dialog.destroy()
+            else:
+                messagebox.showerror("Error", response.get("message", "Unknown error"), parent=dialog)
+
+        tk.Button(dialog, text="Create Account", command=submit, bg="#27ae60", fg="white",
+                  font=("Arial", 11, "bold")).pack(pady=20)
 
     def delete_user(self):
         user = self.get_selected_user()
@@ -233,12 +295,24 @@ class AdminPanel:
         user = self.get_selected_user()
         if not user: return
 
-        # CHANGED: 'password_hash' -> 'password'
-        choice = simpledialog.askstring("Edit", "Type field to edit: 'full_name', 'password', 'username', 'role'",
-                                        parent=self.root)
+        # Determine allowed fields based on user role
+        allowed_fields = ['full_name', 'username', 'role']
+        if user['role'] in ['root', 'admin']:
+            allowed_fields.append('password')
 
-        if choice not in ['full_name', 'password', 'username', 'role']:
-            messagebox.showerror("Error", "Invalid field name")
+        fields_str = ", ".join([f"'{f}'" for f in allowed_fields])
+        choice = simpledialog.askstring("Edit", f"Type field to edit: {fields_str}", parent=self.root)
+
+        if not choice: return # They hit cancel
+
+        choice = choice.lower().strip()
+
+        # Check if they are trying to edit a password on a standard user
+        if choice not in allowed_fields:
+            if choice == 'password':
+                messagebox.showerror("Error", "Standard users are Biometric-Only and do not use passwords.", parent=self.root)
+            else:
+                messagebox.showerror("Error", "Invalid field name.", parent=self.root)
             return
 
         new_val = simpledialog.askstring("Edit", f"Enter new value for {choice}:", parent=self.root)
