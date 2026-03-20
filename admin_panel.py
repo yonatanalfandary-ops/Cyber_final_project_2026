@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import simpledialog, messagebox
 import cv2
 import face_recognition
+from settings_window import SettingsWindow
 
 
 class AdminPanel:
@@ -25,9 +26,10 @@ class AdminPanel:
         top_bar.pack(side="top", fill="x")
         top_bar.pack_propagate(False)  # Prevent shrinking
 
-        # Title (Left)
-        tk.Label(top_bar, text=f"🔧 ADMIN PANEL | {self.admin_username}",
-                 font=("Arial", 18, "bold"), bg="#34495e", fg="#ecf0f1").pack(side="left", padx=20)
+        # Title (Left) - CHANGED: Saved to self.lbl_title so it can update dynamically
+        self.lbl_title = tk.Label(top_bar, text=f"🔧 ADMIN PANEL | {self.admin_username}",
+                                  font=("Arial", 18, "bold"), bg="#34495e", fg="#ecf0f1")
+        self.lbl_title.pack(side="left", padx=20)
 
         # Logout Button (Right)
         tk.Button(top_bar, text="LOGOUT", command=self.close,
@@ -36,6 +38,10 @@ class AdminPanel:
         # Minimize Button (Right)
         tk.Button(top_bar, text="_ Minimize", command=self.minimize_window,
                   font=("Arial", 12, "bold"), bg="#7f8c8d", fg="white", width=10).pack(side="right", padx=10, pady=10)
+
+        # --- NEW: Admin Settings Button (Right) ---
+        tk.Button(top_bar, text="⚙ Settings", command=self.open_admin_settings,
+                  font=("Arial", 12, "bold"), bg="#f39c12", fg="white", width=10).pack(side="right", padx=10, pady=10)
 
         # --- MAIN CONTENT ---
         main_frame = tk.Frame(self.root, bg="#2c3e50")
@@ -94,6 +100,23 @@ class AdminPanel:
         self.root.iconify()
         # Bind the 'Map' event (which happens when window is restored) to re-enable topmost
         self.root.bind("<Map>", self.restore_topmost)
+
+    def open_admin_settings(self):
+        """Opens the Settings menu specifically for the logged-in Admin."""
+        # Disable topmost so the settings window can float above the admin panel
+        self.root.attributes('-topmost', False)
+
+        # Pass role="root" so the Change Password button is visible
+        settings = SettingsWindow(self.net, self.admin_username, self.root, role="root")
+        new_username = settings.show()
+
+        # If the admin changed their own username, update the header UI!
+        if new_username and new_username != self.admin_username:
+            self.admin_username = new_username
+            self.lbl_title.config(text=f"🔧 ADMIN PANEL | {self.admin_username}")
+
+        # Restore Admin Panel topmost status
+        self.root.attributes('-topmost', True)
 
     def restore_topmost(self, event):
         if self.root.state() == 'normal':

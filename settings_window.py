@@ -5,12 +5,13 @@ import face_recognition
 
 
 class SettingsWindow:
-    # 1. Add 'from_payment' parameter (Default False)
-    def __init__(self, network_client, username, parent_root, from_payment=False):
+    # 1. Added 'role' parameter (Defaults to "user")
+    def __init__(self, network_client, username, parent_root, role="user", from_payment=False):
         self.net = network_client
         self.username = username
         self.parent_root = parent_root
-        self.from_payment = from_payment  # Store the flag
+        self.role = role  # Store the role
+        self.from_payment = from_payment
         self.root = None
         self.new_username = None
 
@@ -33,7 +34,11 @@ class SettingsWindow:
         btn_style = {"font": ("Arial", 16), "width": 25, "bg": "#2980b9", "fg": "white"}
 
         tk.Button(frame, text="Change Full Name", command=self.change_name, **btn_style).pack(pady=10)
-        tk.Button(frame, text="Change Password", command=self.change_password, **btn_style).pack(pady=10)
+
+        # --- THE FIX: Only show 'Change Password' if they are an admin/root ---
+        if self.role in ['root', 'admin']:
+            tk.Button(frame, text="Change Password", command=self.change_password, **btn_style).pack(pady=10)
+
         tk.Button(frame, text="Change Username", command=self.change_username, **btn_style).pack(pady=10)
 
         tk.Label(frame, text="--- Biometrics ---", font=("Arial", 12),
@@ -43,8 +48,6 @@ class SettingsWindow:
                   font=("Arial", 16, "bold"), width=25, bg="#e67e22", fg="white").pack(pady=10)
 
         # --- DYNAMIC EXIT BUTTON ---
-        # If coming from payment, show "Back to Payment"
-        # If coming from session, just show "Close Settings"
         exit_text = "Back to Payment" if self.from_payment else "Close Settings"
         exit_color = "#c0392b"  # Red
 
