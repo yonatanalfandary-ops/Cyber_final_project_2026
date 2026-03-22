@@ -1,8 +1,8 @@
 import socket
 import threading
-import json
-import struct
 from database_manager import DatabaseManager
+from NetworkProtocol import Protocol
+from Crypters import NoCrypter
 
 # Configuration
 SERVER_IP = "0.0.0.0"
@@ -18,36 +18,22 @@ class RentalServer:
         print(f"✅ CENTRAL SERVER STARTED on {SERVER_IP}:{SERVER_PORT}")
         print("Waiting for Stations to connect...")
 
-    def send_json(self, client_socket, data):
-        """Sends JSON data with a length header."""
-        try:
-            message = json.dumps(data).encode('utf-8')
-            header = struct.pack('I', len(message))
-            client_socket.sendall(header + message)
-        except Exception as e:
-            print(f"❌ Send Error: {e}")
+    # NOTE: I deleted the send_json() method entirely because Protocol handles it now!
 
     def handle_client(self, client_socket, addr):
         """Handles requests from Stations."""
         print(f"🔗 Connection from: {addr}")
 
+        # --- NEW: Set up Protocol for this specific client ---
+        crypter = NoCrypter()
+        protocol = Protocol(client_socket, crypter)
+
         try:
             while True:
-                # 1. Read Header
-                header = client_socket.recv(4)
-                if not header: break
-                msg_length = struct.unpack('I', header)[0]
+                # --- NEW: Use Protocol to fetch request ---
+                request = protocol.get_message()
+                if not request: break  # Client disconnected
 
-                # 2. Read Body
-                data = b""
-                while len(data) < msg_length:
-                    packet = client_socket.recv(4096)
-                    if not packet: break
-                    data += packet
-                if not data: break
-
-                # 3. Process Request
-                request = json.loads(data.decode('utf-8'))
                 action = request.get("action")
                 print(f"📩 Action '{action}' from {addr}")
 
@@ -190,7 +176,8 @@ class RentalServer:
                     success, msg = self.db.delete_user(request["username"])
                     response = {"status": "SUCCESS" if success else "FAILURE", "message": msg}
 
-                self.send_json(client_socket, response)
+                # --- NEW: Use Protocol to send the response back ---
+                protocol.create_message(response)
 
         except Exception as e:
             print(f"⚠ Connection Error {addr}: {e}")
@@ -201,7 +188,6 @@ class RentalServer:
         while True:
             client_sock, addr = self.server_socket.accept()
             threading.Thread(target=self.handle_client, args=(client_sock, addr), daemon=True).start()
-
 
 if __name__ == "__main__":
     server = RentalServer()
