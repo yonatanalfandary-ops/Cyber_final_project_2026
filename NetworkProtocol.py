@@ -6,7 +6,7 @@ class Protocol:
         self.sock = sock
         self.crypter = crypter
 
-    def create_message(self, data):
+    def create_and_send_message(self, data):
         """Serializes, encrypts, attaches a length header, and sends."""
         # 1. Serialize Dictionary to JSON String, then to raw bytes
         json_string = json.dumps(data)

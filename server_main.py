@@ -2,7 +2,7 @@ import socket
 import threading
 from database_manager import DatabaseManager
 from NetworkProtocol import Protocol
-from Crypters import NoCrypter
+from Crypters import NoCrypter, ASymetricCrypter, SymetricCrypter # <-- NEW IMPORTS
 
 # Configuration
 SERVER_IP = "0.0.0.0"
@@ -24,11 +24,39 @@ class RentalServer:
         """Handles requests from Stations."""
         print(f"🔗 Connection from: {addr}")
 
-        # --- NEW: Set up Protocol for this specific client ---
-        crypter = NoCrypter()
-        protocol = Protocol(client_socket, crypter)
+        # 1. Start with Plaintext Protocol to send Public Key
+        protocol = Protocol(client_socket, NoCrypter())
 
         try:
+            # --- START HANDSHAKE ---
+            # 2. Generate Asymmetric (RSA) keys
+            asym_crypter = ASymetricCrypter()
+            pub_key_bytes = asym_crypter.get_public_key_bytes()
+
+            # 3. Send Public Key to Client (as a hex string)
+            protocol.create_and_send_message({
+                "action": "HANDSHAKE_PUB_KEY",
+                "pub_key_hex": pub_key_bytes.hex()
+            })
+
+            # 4. Wait for Client to reply with the encrypted Symmetric Key
+            handshake_reply = protocol.get_message()
+            if not handshake_reply or handshake_reply.get("action") != "HANDSHAKE_SYM_KEY":
+                print(f"❌ Handshake failed with {addr}")
+                client_socket.close()
+                return
+
+            # Convert hex string back to encrypted bytes
+            encrypted_sym_key = bytes.fromhex(handshake_reply.get("sym_key_hex"))
+
+            # 5. Decrypt the Symmetric Key using our Private Key
+            sym_key_bytes = asym_crypter.decrypt(encrypted_sym_key)
+
+            # 6. UPGRADE PROTOCOL: Swap NoCrypter for the new SymetricCrypter!
+            protocol.crypter = SymetricCrypter(key=sym_key_bytes)
+            print(f"🔐 Secure AES Encrypted Connection Established with {addr}")
+            # --- END HANDSHAKE ---
+
             while True:
                 # --- NEW: Use Protocol to fetch request ---
                 request = protocol.get_message()
@@ -177,7 +205,7 @@ class RentalServer:
                     response = {"status": "SUCCESS" if success else "FAILURE", "message": msg}
 
                 # --- NEW: Use Protocol to send the response back ---
-                protocol.create_message(response)
+                protocol.create_and_send_message(response)
 
         except Exception as e:
             print(f"⚠ Connection Error {addr}: {e}")
