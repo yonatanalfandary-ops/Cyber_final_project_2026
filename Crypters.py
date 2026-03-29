@@ -7,10 +7,10 @@ class NoCrypter:
     def __init__(self):
         pass
 
-    def encrypt(self, data): # data: bytes -> returns: bytes
+    def encrypt(self, data: bytes) -> bytes: 
         return data
 
-    def decrypt(self, data): # data: bytes -> returns: bytes
+    def decrypt(self, data: bytes) -> bytes: 
         return data
 
 
@@ -23,13 +23,13 @@ class SymetricCrypter(NoCrypter):
             self.key = key
         self.fernet = Fernet(self.key)
 
-    def get_key(self): #return bytes
+    def get_key(self) -> bytes:
         return self.key
 
-    def encrypt(self, data): # data: bytes -> returns: bytes
+    def encrypt(self, data: bytes) -> bytes: 
         return self.fernet.encrypt(data)
 
-    def decrypt(self, data): # data: bytes -> returns: bytes
+    def decrypt(self, data: bytes) -> bytes: 
         return self.fernet.decrypt(data)
 
 
@@ -54,7 +54,7 @@ class ASymetricCrypter(NoCrypter):
         elif public_key_bytes is not None:
             self.public_key = serialization.load_pem_public_key(public_key_bytes)
 
-    def get_public_key_bytes(self): #return bytes
+    def get_public_key_bytes(self) -> bytes:
         """Exports the public key so it can be sent over the network."""
         if not self.public_key:
             return b""
@@ -63,7 +63,7 @@ class ASymetricCrypter(NoCrypter):
             format=serialization.PublicFormat.SubjectPublicKeyInfo
         )
 
-    def encrypt(self, data): # data: bytes -> returns: bytes
+    def encrypt(self, data: bytes) -> bytes: 
         """Uses the PUBLIC key to lock data. (Client uses this on the Symmetric Key)"""
         if not self.public_key:
             raise ValueError("Public key not loaded!")
@@ -77,7 +77,7 @@ class ASymetricCrypter(NoCrypter):
             )
         )
 
-    def decrypt(self, data): # data: bytes -> returns: bytes
+    def decrypt(self, data: bytes) -> bytes: 
         """Uses the PRIVATE key to unlock data. (Server uses this to read the Symmetric Key)"""
         if not self.private_key:
             raise ValueError("Private key not loaded! Clients cannot decrypt asymmetric data.")
