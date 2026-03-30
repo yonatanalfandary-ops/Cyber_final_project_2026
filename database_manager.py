@@ -20,7 +20,6 @@ class DatabaseManager:
         return mysql.connector.connect(database=self.db_name, **self.config)
 
     def init_database(self):
-        """Creates Tables for Users and Stations (Matches your existing Schema)."""
         try:
             conn = mysql.connector.connect(**self.config)
             cursor = conn.cursor()
@@ -36,7 +35,7 @@ class DatabaseManager:
                                 user_id VARCHAR(36) PRIMARY KEY,
                                 username VARCHAR(50) UNIQUE NOT NULL,
                                 password VARCHAR(255),
-                                full_name VARCHAR(100),  -- <--- ADD THIS LINE
+                                full_name VARCHAR(100),
                                 role VARCHAR(20) DEFAULT 'user', 
                                 time_balance FLOAT DEFAULT 0,
                                 face_encoding TEXT, 
@@ -44,15 +43,27 @@ class DatabaseManager:
                             )
                         ''')
 
-            # 2. STATIONS TABLE
+            # 2. STATIONS TABLE (Updated)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS stations (
                     station_id VARCHAR(50) PRIMARY KEY,
                     station_name VARCHAR(100),
-                    status VARCHAR(20) DEFAULT 'offline',
-                    last_seen DATETIME
+                    status VARCHAR(20) DEFAULT 'Offline',
+                    last_seen DATETIME,
+                    active_user VARCHAR(50) DEFAULT NULL,
+                    revenue FLOAT DEFAULT 0.0
                 )
             ''')
+
+            # Safe Alters in case the table already existed without these columns
+            try:
+                cursor.execute("ALTER TABLE stations ADD COLUMN active_user VARCHAR(50) DEFAULT NULL")
+            except:
+                pass
+            try:
+                cursor.execute("ALTER TABLE stations ADD COLUMN revenue FLOAT DEFAULT 0.0")
+            except:
+                pass
 
             conn.commit()
             conn.close()
@@ -62,12 +73,99 @@ class DatabaseManager:
             print(f"❌ Database Init Error: {err}")
 
     def ensure_root_exists(self):
-        """Creates the default admin if missing."""
         users = self.get_all_users()
         if not any(u['role'] == 'root' for u in users):
             print("⚠ No Root user found. Creating default 'admin'...")
             self.create_user("admin", "admin123", "System Administrator", "root")
 
+    # --- STATION MGMT & GAP LOGIC ---
+
+    def check_station_exists(self, station_id):
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM stations WHERE station_id = %s", (station_id,))
+            exists = cursor.fetchone() is not None
+            conn.close()
+            return exists
+        except:
+            return False
+
+    def get_all_station_ids(self):
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT station_id FROM stations")
+            ids = [row[0] for row in cursor.fetchall()]
+            conn.close()
+            return ids
+        except:
+            return []
+
+    def create_gap_station(self):
+        """Finds the lowest missing STATION_XX integer, creates it, and returns it."""
+        existing_ids = self.get_all_station_ids()
+        numbers = []
+        for sid in existing_ids:
+            if sid.startswith("STATION_"):
+                try:
+                    numbers.append(int(sid.split("_")[1]))
+                except ValueError:
+                    pass
+
+        numbers.sort()
+        new_num = 1
+        for num in numbers:
+            if num == new_num:
+                new_num += 1
+            elif num > new_num:
+                break
+
+        new_id = f"STATION_{new_num:02d}"
+
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            sql = "INSERT INTO stations (station_id, station_name, status, revenue) VALUES (%s, %s, 'Online', 0.0)"
+            cursor.execute(sql, (new_id, f"Station {new_num}"))
+            conn.commit()
+            conn.close()
+            return new_id
+        except Exception as e:
+            print(f"❌ Gap Logic Error: {e}")
+            return None
+
+    def update_station_state(self, station_id, status, active_user=None):
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            sql = "UPDATE stations SET status=%s, active_user=%s, last_seen=NOW() WHERE station_id=%s"
+            cursor.execute(sql, (status, active_user, station_id))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Station Update Error: {e}")
+
+    def add_station_revenue(self, station_id, amount):
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("UPDATE stations SET revenue = revenue + %s WHERE station_id = %s", (amount, station_id))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            pass
+
+    def delete_station(self, station_id):
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM stations WHERE station_id = %s", (station_id,))
+            conn.commit()
+            conn.close()
+            return True
+        except:
+            return False
     # --- USER MANAGEMENT ---
 
     def create_user(self, username, password, full_name, role):

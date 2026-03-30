@@ -1,6 +1,9 @@
 import cv2
 import numpy as np
 import time
+import os
+import sys
+import json
 import face_recognition
 from network_client import NetworkClient
 from lock_screen import LockScreen
@@ -14,22 +17,52 @@ from session_guard import SessionGuard
 from smart_lockscreen import SmartLockScreen
 
 # CONFIG
-STATION_ID = "STATION_01"
-SERVER_IP = "127.0.0.1"
+SERVER_IP = "10.0.0.24"
 SYNC_INTERVAL = 5
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'station_config.json')
 
 
 class MainClient:
     def __init__(self):
+        self.station_id = None
         self.net = NetworkClient(SERVER_IP)
+        if not self.net.connect(): sys.exit()
+
+        self._init_station()
+
         self.locker = None
         self.scanner = BiometricScanner()
         self.current_user = None
 
-        if not self.net.connect(): exit()
+    def _init_station(self):
+        """Reads local config or asks Server to generate a Gap ID."""
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, 'r') as f:
+                self.station_id = json.load(f).get("station_id")
+
+        if self.station_id:
+            resp = self.net.send_request("CONNECT_STATION", {"station_id": self.station_id})
+        else:
+            resp = self.net.send_request("REQUEST_NEW_STATION_ID", {})
+
+        # Catch if the Wipe payload happened during initialization
+        if resp and resp.get("action") == "COMMAND_UNREGISTER":
+            if os.path.exists(CONFIG_PATH): os.remove(CONFIG_PATH)
+            sys.exit(0)
+
+        # Save new Gap ID
+        if resp and resp.get("status") == "SUCCESS" and resp.get("new_id"):
+            self.station_id = resp.get("new_id")
+            with open(CONFIG_PATH, 'w') as f:
+                json.dump({"station_id": self.station_id}, f)
+
+        if not self.station_id:
+            print("❌ Failed to initialize Station ID.")
+            sys.exit()
+
+        print(f"🖥️ Station Initialized as: {self.station_id}")
 
     def run(self):
-        """The main lifecycle state machine."""
         while True:
             # STATE 1: Lock Screen
             self.locker = LockScreen(on_submit_callback=self.process_login)
@@ -37,35 +70,53 @@ class MainClient:
 
             # STATE 2: Authenticated
             if self.current_user:
-                print(f"✅ Logged in as: {self.current_user['username']}")
-
                 if self.current_user['role'] == 'root':
-                    # Admin Mode
                     admin = AdminPanel(self.net, self.current_user['username'])
                     admin.show()
-                    self.current_user = None
+                    self._execute_logout()
                 else:
-                    # User Session Mode loop (Allows pausing/resuming)
                     while self.current_user:
                         guard = SessionGuard(self.net, self.current_user)
-                        status = guard.start()  # Blocks until session ends or pauses
+                        status = guard.start()
 
                         if status == "PAUSED":
-                            print("🔒 Session Paused. Entering Smart Lock.")
+                            print(f"⏸️ Session paused for {self.current_user['username']}. Updating server...")
+
+                            # --- NEW: Tell server the station is Paused ---
+                            self.net.send_request("SYNC_STATE", {
+                                "state_status": "Paused",
+                                "active_user": self.current_user['username']
+                            })
+
                             smart_lock = SmartLockScreen(self.current_user, self.scanner)
                             lock_result = smart_lock.show()
 
                             if lock_result == "RESUME":
-                                # Loops back up and starts a fresh SessionGuard with saved time
+                                print(f"▶️ Session resumed for {self.current_user['username']}. Updating server...")
+
+                                # --- NEW: Tell server the station is back In Use ---
+                                self.net.send_request("SYNC_STATE", {
+                                    "state_status": "In Use",
+                                    "active_user": self.current_user['username']
+                                })
                                 continue
                             else:
-                                # They timed out or hit Escape, so clear user and go to main Login
-                                self.current_user = None
+                                # User chose to logout from the paused smart lock screen
+                                self._execute_logout()
+                                print("User logged out from pause.")
                                 break
-                        else:
-                            # They properly logged out via the Q button or time ran out
-                            self.current_user = None
+
+
+                        # --- THE FIX: Handle normal logouts and add cooldown ---
+                        elif status == "LOGOUT":
+                            self._execute_logout()  # This correctly sets self.current_user = None
+                            print("User logged out.")
                             break
+
+    def _execute_logout(self):
+        """Notifies the Server to revert status back to Online."""
+        self.net.send_request("LOGOUT", {})
+        self.current_user = None
 
     def process_login(self, username):
         """Handles the 4-step login and routing logic."""
@@ -91,7 +142,6 @@ class MainClient:
                 self._trigger_manual_login()
             else:
                 print("⚠️ Standard user has no face ID. Blocking access.")
-                # --- THE FIX: Block standard users instead of routing them ---
                 self.locker.reset_to_start("No Face ID setup. Please see Admin.")
             return
 
@@ -105,6 +155,13 @@ class MainClient:
 
             if target_user['role'] in ['root', 'admin'] or balance > 0:
                 self.current_user = target_user
+
+                # --- NEW: Tell server Face ID unlock succeeded! ---
+                self.net.send_request("SYNC_STATE", {
+                    "state_status": "In Use",
+                    "active_user": target_user['username']
+                })
+
                 self.locker.unlock()
             else:
                 print("💰 Balance is 0. Opening Rent Window...")
@@ -120,6 +177,13 @@ class MainClient:
                     print(f"✅ Rent successful! Adding {minutes_added} mins to session.")
                     target_user['time_balance'] = minutes_added
                     self.current_user = target_user
+
+                    # --- NEW: Tell server Face ID unlock succeeded after rent! ---
+                    self.net.send_request("SYNC_STATE", {
+                        "state_status": "In Use",
+                        "active_user": target_user['username']
+                    })
+
                     self.locker.unlock()
                 else:
                     print("❌ Payment cancelled. Returning to Lock Screen.")
@@ -137,18 +201,23 @@ class MainClient:
 
     def manual_login_sequence(self):
         """Admin fallback for password login."""
-        login = LoginWindow(self.net, STATION_ID)
+        login = LoginWindow(self.net, self.station_id)
         user_data = login.show()
 
         if user_data:
             role = user_data.get('role')
 
-            # --- THE FIX: Only allow Admins to proceed from this window ---
             if role in ['root', 'admin']:
                 print(f"✅ Admin {user_data['username']} authenticated manually.")
                 self.current_user = user_data
+
+                # --- NEW: Tell server manual Admin login succeeded! ---
+                self.net.send_request("SYNC_STATE", {
+                    "state_status": "In Use",
+                    "active_user": user_data['username']
+                })
+
             else:
-                # Fallback safeguard in case of a server glitch
                 print("❌ Access Denied: Standard users cannot use manual login.")
                 if self.locker and self.locker.root:
                     self.locker.root.deiconify()

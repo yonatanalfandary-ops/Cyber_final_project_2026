@@ -1,10 +1,12 @@
 import socket
+import os
+import sys
 from NetworkProtocol import Protocol
-from Crypters import NoCrypter, ASymetricCrypter, SymetricCrypter  # <-- NEW IMPORTS
+from Crypters import NoCrypter, ASymetricCrypter, SymetricCrypter
 
 
 class NetworkClient:
-    def __init__(self, server_ip="127.0.0.1", server_port=5000):
+    def __init__(self, server_ip="10.0.0.24", server_port=5000):
         self.server_ip = server_ip
         self.server_port = server_port
         self.sock = None
@@ -56,26 +58,32 @@ class NetworkClient:
             return False
 
     def send_request(self, action, data=None):
-        """Sends a dictionary to the server and waits for a reply."""
         if not self.protocol:
-            print("⚠ Error: Not connected to server.")
             return None
 
         req = {"action": action}
-        if data:
-            req.update(data)
+        if data: req.update(data)
 
         try:
-            # --- NEW: Let the Protocol do all the work! ---
             self.protocol.create_and_send_message(req)
             response = self.protocol.get_message()
+
+            # --- THE KILL SWITCH INTERCEPT ---
+            if response and response.get("action") == "COMMAND_UNREGISTER":
+                print("💀 KILL SWITCH RECEIVED. Remote wipe triggered.")
+                config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'station_config.json')
+                if os.path.exists(config_path):
+                    try:
+                        os.remove(config_path)
+                    except:
+                        pass
+                sys.exit(0)  # Terminate entirely
+
             return response
 
         except Exception as e:
-            print(f"❌ Communication Error: {e}")
             self.close()
             return None
 
     def close(self):
-        if self.sock:
-            self.sock.close()
+        if self.sock: self.sock.close()

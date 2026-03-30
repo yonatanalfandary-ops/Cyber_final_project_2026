@@ -35,19 +35,26 @@ class SessionGuard:
         self.root = None
         self.lbl_time = None
 
+        self._hud_timer = None
+        self._countdown_timer = None
+
     def start(self):
         """Starts the background monitor and the Mini-HUD."""
         print(f"--- SESSION STARTED: {self.user['username']} ---")
 
-        # 1. Start the Background Camera Thread
-        camera_thread = Thread(target=self._background_monitor, daemon=True)
-        camera_thread.start()
+        # 1. Start the Background Camera Thread (Store it as self.camera_thread)
+        self.camera_thread = Thread(target=self._background_monitor, daemon=True)
+        self.camera_thread.start()
 
         # 2. Start the Mini-Toolbar UI (Main Thread)
         self._create_hud()
 
         # Cleanup when HUD closes
         self.is_running = False
+
+        # --- THE FIX: Wait for the background thread to actually die ---
+        if hasattr(self, 'camera_thread') and self.camera_thread.is_alive():
+            self.camera_thread.join(timeout=2.0) # Give it up to 2 seconds to run cap.release()
 
         # Save exact balance back to the user dictionary for when they resume!
         self.user['time_balance'] = self.balance_mins
@@ -175,7 +182,7 @@ class SessionGuard:
                 self.warning_shown = False
 
         # 4. Schedule next tick
-        self.root.after(1000, self._update_hud_loop)
+        self._hud_timer = self.root.after(1000, self._update_hud_loop)
 
     def _background_monitor(self):
         cap = cv2.VideoCapture(0)
@@ -210,8 +217,9 @@ class SessionGuard:
                     print("⏸️ User Left. Pausing Session...")
                     self.is_running = False
                     self.exit_status = "PAUSED"  # This tells main_client to lock, not logout!
+
                     if self.root:
-                        self.root.after(0, self.root.destroy)
+                        self.root.after(0, self._safe_pause_cleanup)
             time.sleep(0.1)
         cap.release()
 
@@ -286,12 +294,53 @@ class SessionGuard:
             self._execute_logout()
             return
         self.lbl_time.config(text=f"CLOSING IN {seconds_left}s...", fg="red")
-        self.root.after(1000, lambda: self._start_force_logout_countdown(seconds_left - 1))
+        self._countdown_timer = self.root.after(1000, lambda: self._start_force_logout_countdown(seconds_left - 1))
+
+    def _safe_pause_cleanup(self):
+        """Executes strictly in the MAIN thread to safely stop Tkinter timers and UI."""
+        if hasattr(self, '_hud_timer') and self._hud_timer:
+            self.root.after_cancel(self._hud_timer)
+        if hasattr(self, '_countdown_timer') and self._countdown_timer:
+            self.root.after_cancel(self._countdown_timer)
+
+        try:
+            self.root.quit()
+            self.root.destroy()
+        except:
+            pass
+
+    def _final_destroy(self):
+        try:
+            self.root.quit()
+            self.root.destroy()
+        except:
+            pass
 
     def _execute_logout(self, reason=None):
+        """The Unified Cleanup & Exit Function"""
         if reason:
-            messagebox.showinfo("Session Ended", reason, parent=self.root)
+            try:
+                messagebox.showinfo("Session Ended", reason, parent=self.root)
+            except:
+                pass
+
+        # 1. Stop the loops
         self.is_running = False
+
+        # 2. Cancel the TKinter timers immediately
+        if hasattr(self, '_hud_timer') and self._hud_timer:
+            self.root.after_cancel(self._hud_timer)
+        if hasattr(self, '_countdown_timer') and self._countdown_timer:
+            self.root.after_cancel(self._countdown_timer)
+
+        # 3. Finalize State
         self.exit_status = "LOGOUT"
+
+        # 4. Thread-Safe UI Destruction with a tiny delay for the camera
+
+        # Wait 200ms before destroying the UI. This gives the background thread
+        # enough time to exit its loop and execute cap.release().
+        # Without this delay, the UI closes too fast, causing a race condition
+        # that triggers a "Tcl_AsyncDelete async handler deleted by the wrong thread " crash or locks up the webcam.
         if self.root:
-            self.root.destroy()
+            self.root.after(200, self._final_destroy)
