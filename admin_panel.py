@@ -294,7 +294,6 @@ class AdminPanel:
             self.time_input_value = int(val)
             dialog.destroy()
 
-
         # Submit Button
         tk.Button(dialog, text="Update Balance", command=on_submit,
                   bg="#27ae60", fg="white", font=("Arial", 11, "bold")).pack(pady=8)
@@ -326,14 +325,15 @@ class AdminPanel:
         fields_str = ", ".join([f"'{f}'" for f in allowed_fields])
         choice = simpledialog.askstring("Edit", f"Type field to edit: {fields_str}", parent=self.root)
 
-        if not choice: return # They hit cancel
+        if not choice: return  # They hit cancel
 
         choice = choice.lower().strip()
 
         # Check if they are trying to edit a password on a standard user
         if choice not in allowed_fields:
             if choice == 'password':
-                messagebox.showerror("Error", "Standard users are Biometric-Only and do not use passwords.", parent=self.root)
+                messagebox.showerror("Error", "Standard users are Biometric-Only and do not use passwords.",
+                                     parent=self.root)
             else:
                 messagebox.showerror("Error", "Invalid field name.", parent=self.root)
             return
@@ -373,6 +373,10 @@ class AdminPanel:
                                 cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 2)
                     cv2.putText(frame, "Press [SPACE] to Capture", (20, 450),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 1)
+
+                    # --- NEW: Cancel Instruction ---
+                    cv2.putText(frame, "Press ESC to cancel", (20, 475),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
                     cv2.imshow("Admin Face Setup", frame)
                     key = cv2.waitKey(1)
@@ -453,4 +457,3 @@ class AdminPanel:
 
     def close(self):
         self.root.destroy()
-

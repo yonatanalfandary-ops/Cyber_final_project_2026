@@ -117,8 +117,14 @@ class SettingsWindow:
                 while not captured:
                     ret, frame = cap.read()
                     if not ret: break
+
                     cv2.putText(frame, f"Look {angle} - Press SPACE", (50, 50),
                                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+                    # --- NEW: Cancel Instruction ---
+                    cv2.putText(frame, "Press ESC to cancel", (50, 90),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+
                     cv2.imshow("Face Capture", frame)
 
                     # FIX 2: Check if the 'X' button was clicked
