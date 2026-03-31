@@ -58,8 +58,16 @@ class RentalServer:
                 station_id = self.db.create_gap_station()
                 protocol.create_and_send_message({"status": "SUCCESS", "new_id": station_id})
 
+
             elif init_action == "CONNECT_STATION":
                 station_id = init_req.get("station_id")
+
+                # --- TASK 12 FIX: Check for duplicate Station ID ---
+                if station_id in self.active_stations:
+                    print(f"⛔ Denied Connection: Station {station_id} is already in use!")
+                    protocol.create_and_send_message({"status": "ERROR_STATION_IN_USE"})
+                    return  # Drop the duplicate connection instantly
+
                 # SECURITY CHECK: Was it deleted from the DB while offline?
                 if not self.db.check_station_exists(station_id):
                     print(f"⛔ Denied Connection to wiped station: {station_id}")
@@ -99,8 +107,22 @@ class RentalServer:
                                 "message": "Standard users cannot use passwords. Please use Face ID."
                             }
                         else:
+                            # --- TASK 15 FIX: Prevent Duplicate Admin Login ---
+                            requested_user = user['username']
+                            is_duplicate = False
+                            for sid, prot in self.active_stations.items():
+                                if sid != station_id and getattr(prot, 'active_user', None) == requested_user:
+                                    is_duplicate = True
+                                    break
+
+                            if is_duplicate:
+                                print(f"⛔ Login Blocked: Admin {requested_user} is already active on another station.")
+                                protocol.create_and_send_message({"status": "ERROR_USER_ALREADY_LOGGED_IN"})
+                                continue  # Skip the rest of the loop, forcing client to handle the error
+
                             # Proceed with Admin Login & Update Station State
-                            self.db.update_station_state(station_id, 'In Use', user['username'])
+                            protocol.active_user = requested_user  # Track user in server memory
+                            self.db.update_station_state(station_id, 'In Use', requested_user)
                             response = {
                                 "status": "SUCCESS",
                                 "username": user['username'],
@@ -114,6 +136,7 @@ class RentalServer:
 
                 # CASE 1b: Logout
                 elif action == "LOGOUT":
+                    protocol.active_user = None  # Clear user from server memory
                     self.db.update_station_state(station_id, 'Online', None)
                     response = {"status": "SUCCESS"}
 
@@ -121,6 +144,23 @@ class RentalServer:
                 elif action == "SYNC_STATE":
                     new_status = request.get("state_status")
                     active_username = request.get("active_user")
+
+                    # --- TASK 15 FIX: Prevent Duplicate Face ID / Normal User Login ---
+                    if new_status in ["In Use", "Paused"] and active_username:
+                        is_duplicate = False
+                        for sid, prot in self.active_stations.items():
+                            if sid != station_id and getattr(prot, 'active_user', None) == active_username:
+                                is_duplicate = True
+                                break
+
+                        if is_duplicate:
+                            print(f"⛔ Sync Blocked: User {active_username} is already active on another station.")
+                            protocol.create_and_send_message({"status": "ERROR_USER_ALREADY_LOGGED_IN"})
+                            continue  # Skip the rest of the loop, forcing client to handle the error
+
+                        protocol.active_user = active_username  # Track user in server memory
+                    else:
+                        protocol.active_user = None  # Clear if returning to Online/Lock screen
 
                     self.db.update_station_state(station_id, new_status, active_username)
                     response = {"status": "SUCCESS"}

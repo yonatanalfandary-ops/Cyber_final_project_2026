@@ -45,6 +45,21 @@ class MainClient:
         else:
             resp = self.net.send_request("REQUEST_NEW_STATION_ID", {})
 
+        # --- TASK 12 FIX: Check for duplicate Station ID ---
+        if resp and resp.get("status") == "ERROR_STATION_IN_USE":
+            import tkinter as tk
+            from tkinter import messagebox
+            temp_root = tk.Tk()
+            temp_root.withdraw()  # Hide the main window
+
+            # Show the error directly (this pauses execution until OK is clicked)
+            messagebox.showerror("Connection Error",
+                                 "Error: This Station ID is currently active on another computer.")
+
+            # Clean up and force exit immediately after OK is clicked
+            temp_root.destroy()
+            os._exit(0)
+
         # Catch if the Wipe payload happened during initialization
         if resp and resp.get("action") == "COMMAND_UNREGISTER":
             if os.path.exists(CONFIG_PATH): os.remove(CONFIG_PATH)
@@ -154,14 +169,24 @@ class MainClient:
             balance = float(target_user.get('time_balance', 0))
 
             if target_user['role'] in ['root', 'admin'] or balance > 0:
-                self.current_user = target_user
-
                 # --- NEW: Tell server Face ID unlock succeeded! ---
-                self.net.send_request("SYNC_STATE", {
+                resp = self.net.send_request("SYNC_STATE", {
                     "state_status": "In Use",
                     "active_user": target_user['username']
                 })
 
+                # --- TASK 15 FIX: Prevent Duplicate User Login ---
+                if resp and resp.get("status") == "ERROR_USER_ALREADY_LOGGED_IN":
+                    print("❌ Login Blocked: User already active elsewhere.")
+                    from tkinter import messagebox
+                    self.locker.root.after(0, lambda: messagebox.showerror("Login Failed",
+                                                                           "User is already logged in on another station.",
+                                                                           parent=self.locker.root))
+                    self.locker.root.deiconify()
+                    self.locker.reset_to_start("Already logged in elsewhere.")
+                    return
+
+                self.current_user = target_user
                 self.locker.unlock()
             else:
                 print("💰 Balance is 0. Opening Rent Window...")
@@ -175,15 +200,26 @@ class MainClient:
 
                 if minutes_added > 0:
                     print(f"✅ Rent successful! Adding {minutes_added} mins to session.")
-                    target_user['time_balance'] = minutes_added
-                    self.current_user = target_user
 
                     # --- NEW: Tell server Face ID unlock succeeded after rent! ---
-                    self.net.send_request("SYNC_STATE", {
+                    resp = self.net.send_request("SYNC_STATE", {
                         "state_status": "In Use",
                         "active_user": target_user['username']
                     })
 
+                    # --- TASK 15 FIX: Prevent Duplicate User Login (Post-Rent) ---
+                    if resp and resp.get("status") == "ERROR_USER_ALREADY_LOGGED_IN":
+                        print("❌ Login Blocked: User already active elsewhere.")
+                        from tkinter import messagebox
+                        self.locker.root.after(0, lambda: messagebox.showerror("Login Failed",
+                                                                               "User is already logged in on another station.",
+                                                                               parent=self.locker.root))
+                        self.locker.root.deiconify()
+                        self.locker.reset_to_start("Already logged in elsewhere.")
+                        return
+
+                    target_user['time_balance'] = minutes_added
+                    self.current_user = target_user
                     self.locker.unlock()
                 else:
                     print("❌ Payment cancelled. Returning to Lock Screen.")
@@ -209,14 +245,24 @@ class MainClient:
 
             if role in ['root', 'admin']:
                 print(f"✅ Admin {user_data['username']} authenticated manually.")
-                self.current_user = user_data
 
                 # --- NEW: Tell server manual Admin login succeeded! ---
-                self.net.send_request("SYNC_STATE", {
+                resp = self.net.send_request("SYNC_STATE", {
                     "state_status": "In Use",
                     "active_user": user_data['username']
                 })
 
+                # --- TASK 15 FIX: Prevent Duplicate Admin Login ---
+                if resp and resp.get("status") == "ERROR_USER_ALREADY_LOGGED_IN":
+                    print("❌ Login Blocked: Admin already active elsewhere.")
+                    from tkinter import messagebox
+                    if self.locker and self.locker.root:
+                        self.locker.root.after(0, lambda: messagebox.showerror("Login Failed", "User is already logged in on another station.", parent=self.locker.root))
+                        self.locker.root.deiconify()
+                        self.locker.reset_to_start("Already logged in elsewhere.")
+                    return
+
+                self.current_user = user_data
             else:
                 print("❌ Access Denied: Standard users cannot use manual login.")
                 if self.locker and self.locker.root:

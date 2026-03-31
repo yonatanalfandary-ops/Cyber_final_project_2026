@@ -72,6 +72,13 @@ class LoginWindow:
             print("✅ Login Successful!")
             self.user_data = response
             self.root.destroy()
+
+        # --- TASK 15 FIX: Intercept the duplicate user error ---
+        elif response and response.get("status") == "ERROR_USER_ALREADY_LOGGED_IN":
+            print("❌ Login Blocked: Admin already active elsewhere.")
+            messagebox.showerror("Login Failed", "Login Blocked: Admin is already active elsewhere.")
+            self.entry_pass.delete(0, tk.END)  # Clear the password field for safety
+
         else:
             msg = response.get("message", "Unknown Error") if response else "Server Timeout"
             messagebox.showerror("Login Failed", msg)
