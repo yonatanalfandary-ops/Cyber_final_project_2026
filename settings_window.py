@@ -35,8 +35,8 @@ class SettingsWindow:
 
         tk.Button(frame, text="Change Full Name", command=self.change_name, **btn_style).pack(pady=10)
 
-        # --- THE FIX: Only show 'Change Password' if they are an admin/root ---
-        if self.role in ['root', 'admin']:
+        # --- THE FIX: Only show 'Change Password' if they are root ---
+        if self.role == 'root':
             tk.Button(frame, text="Change Password", command=self.change_password, **btn_style).pack(pady=10)
 
         tk.Button(frame, text="Change Username", command=self.change_username, **btn_style).pack(pady=10)
@@ -65,9 +65,6 @@ class SettingsWindow:
             "value": value
         })
         return response.get("status") == "SUCCESS"
-
-    # ... [Keep change_name, change_password, change_username, recapture_face exactly as they were] ...
-    # (I omitted them here to save space, but ensure you keep the existing logic!)
 
     def change_name(self):
         new_name = simpledialog.askstring("Update Name", "Enter new Full Name:", parent=self.root)
@@ -107,7 +104,10 @@ class SettingsWindow:
         if not confirm: return
 
         self.root.withdraw()
-        cap = cv2.VideoCapture(0)
+
+        # FIX 1: Use DirectShow to prevent MSMF hardware conflict crashes
+        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+
         angles = ["Center", "Left", "Right", "Up", "Down"]
         captured_encodings = []
 
@@ -120,6 +120,12 @@ class SettingsWindow:
                     cv2.putText(frame, f"Look {angle} - Press SPACE", (50, 50),
                                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                     cv2.imshow("Face Capture", frame)
+
+                    # FIX 2: Check if the 'X' button was clicked
+                    if cv2.getWindowProperty("Face Capture", cv2.WND_PROP_VISIBLE) < 1:
+                        print("Capture cancelled via 'X' button.")
+                        return  # Hits finally block automatically
+
                     key = cv2.waitKey(1)
                     if key == 32:  # Space
                         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -133,16 +139,15 @@ class SettingsWindow:
                                 cv2.imshow("Face Capture", frame)
                                 cv2.waitKey(500)
                     if key == 27:  # ESC
-                        cap.release()
-                        cv2.destroyAllWindows()
-                        self.root.deiconify()
-                        return
+                        print("Capture cancelled via ESC.")
+                        return  # Hits finally block automatically
 
             if len(captured_encodings) == 5:
-                password = simpledialog.askstring("Auth Required", "Enter password to save:", show="*",
-                                                  parent=self.root)
+                # No password needed since they are already authenticated and logged in!
                 response = self.net.send_request("UPDATE_FACE", {
-                    "username": self.username, "password": password, "face_data": captured_encodings
+                    "username": self.username,
+                    "password": "",
+                    "face_data": captured_encodings
                 })
                 if response.get("status") == "SUCCESS":
                     messagebox.showinfo("Success", "Face ID Updated!", parent=self.root)

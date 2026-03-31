@@ -195,12 +195,23 @@ class RentalServer:
                     target_username = request.get("username")
                     password = request.get("password")
                     new_face_data = request.get("face_data")
+                    requester_username = request.get("requester_username")
 
-                    user_auth = self.db.authenticate_user_login(target_username, password)
-                    admin_auth = self.db.authenticate_user_login("admin", password)
-                    is_admin = admin_auth and admin_auth['role'] == 'root'
+                    # 1. Check if it's a self-update by the currently actively logged-in user
+                    is_self_update = (protocol.active_user == target_username)
 
-                    if user_auth or is_admin:
+                    # 2. Try authenticating the regular user (if a password was provided)
+                    user_auth = self.db.authenticate_user_login(target_username, password) if password else None
+
+                    # 3. Try authenticating the root user requesting the override
+                    admin_auth = None
+                    if requester_username and password:
+                        admin_auth = self.db.authenticate_user_login(requester_username, password)
+                    is_admin = admin_auth and admin_auth.get('role') == 'root'
+
+                    # AUTHORIZATION LOGIC:
+                    # Allow if it's an active self-update OR they provided a valid user password OR valid root password
+                    if is_self_update or user_auth or is_admin:
                         success = self.db.update_user_face(target_username, new_face_data)
                         if success:
                             response = {"status": "SUCCESS", "message": "Face Updated"}
@@ -208,8 +219,8 @@ class RentalServer:
                         else:
                             response = {"status": "FAIL", "message": "Database Error"}
                     else:
-                        print(f"⛔ Denied face update for {target_username} (Bad Password)")
-                        response = {"status": "DENIED", "message": "Bad Password"}
+                        print(f"⛔ Denied face update for {target_username} (Unauthorized)")
+                        response = {"status": "DENIED", "message": "Unauthorized or Bad Password"}
 
                 # CASE 4b: Update Profile
                 elif action == "UPDATE_PROFILE":

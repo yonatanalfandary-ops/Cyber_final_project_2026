@@ -294,13 +294,31 @@ class DatabaseManager:
             if field not in ['full_name', 'password', 'username', 'role']:
                 return False, "Invalid field"
 
+            # --- THE FIX: Strict Role Validation ---
+            if field == 'role' and new_value not in ['root', 'user']:
+                return False, "Role must be either 'root' or 'user'."
+            # ---------------------------------------
+
+            # 1. Update the primary field
             sql = f"UPDATE users SET {field} = %s WHERE username = %s"
             cursor.execute(sql, (new_value, current_username))
+
+            # Capture the rowcount BEFORE executing any other queries
+            rows_affected = cursor.rowcount
+
+            # 2. If promoting to root, wipe the time balance (Removed 'admin' logic)
+            if field == 'role' and new_value == 'root':
+                zero_sql = "UPDATE users SET time_balance = 0 WHERE username = %s"
+                cursor.execute(zero_sql, (current_username,))
+                print(f"⚖️ Database: Wiped time_balance to 0 for promoted root user '{current_username}'")
+
+            # 3. Commit the transaction
             conn.commit()
 
-            if cursor.rowcount > 0:
+            if rows_affected > 0:
                 return True, "Update success"
-            return False, "User not found"
+            return False, "User not found or no changes made"
+
         except Exception as e:
             return False, str(e)
         finally:

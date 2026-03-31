@@ -320,7 +320,7 @@ class AdminPanel:
 
         # Determine allowed fields based on user role
         allowed_fields = ['full_name', 'username', 'role']
-        if user['role'] in ['root', 'admin']:
+        if user['role'] == 'root':
             allowed_fields.append('password')
 
         fields_str = ", ".join([f"'{f}'" for f in allowed_fields])
@@ -407,7 +407,7 @@ class AdminPanel:
         if capture_successful:
             # Ask for Admin Password
             admin_pass = simpledialog.askstring("Security Check",
-                                                "Enter ADMIN/USER's password to confirm update:",
+                                                f"Enter password for admin '{self.admin_username}' to authorize:",
                                                 show="*",
                                                 parent=self.root)
             if not admin_pass: return
@@ -416,7 +416,8 @@ class AdminPanel:
             response = self.net.send_request("UPDATE_FACE", {
                 "username": user['username'],
                 "password": admin_pass,
-                "face_data": captured_encodings
+                "face_data": captured_encodings,
+                "requester_username": self.admin_username  # <-- NEW: Tells the server who is authorizing this
             })
 
             # 4. Show the Result Popup

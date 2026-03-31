@@ -151,8 +151,8 @@ class MainClient:
             return
 
         if not target_user.get('face_encoding'):
-            if target_user.get('role') in ['root', 'admin']:
-                print("🛡️ Admin without face ID. Routing instantly to manual login.")
+            if target_user.get('role') == 'root':
+                print("🛡️ Root without face ID. Routing instantly to manual login.")
                 self.locker.reset_to_start("")
                 self._trigger_manual_login()
             else:
@@ -168,7 +168,7 @@ class MainClient:
             print("✅ Face Matched!")
             balance = float(target_user.get('time_balance', 0))
 
-            if target_user['role'] in ['root', 'admin'] or balance > 0:
+            if target_user['role'] == 'root' or balance > 0:
                 # --- NEW: Tell server Face ID unlock succeeded! ---
                 resp = self.net.send_request("SYNC_STATE", {
                     "state_status": "In Use",
@@ -243,8 +243,8 @@ class MainClient:
         if user_data:
             role = user_data.get('role')
 
-            if role in ['root', 'admin']:
-                print(f"✅ Admin {user_data['username']} authenticated manually.")
+            if role == 'root':
+                print(f"✅ Root {user_data['username']} authenticated manually.")
 
                 # --- NEW: Tell server manual Admin login succeeded! ---
                 resp = self.net.send_request("SYNC_STATE", {
@@ -254,7 +254,7 @@ class MainClient:
 
                 # --- TASK 15 FIX: Prevent Duplicate Admin Login ---
                 if resp and resp.get("status") == "ERROR_USER_ALREADY_LOGGED_IN":
-                    print("❌ Login Blocked: Admin already active elsewhere.")
+                    print("❌ Login Blocked: already active elsewhere.")
                     from tkinter import messagebox
                     if self.locker and self.locker.root:
                         self.locker.root.after(0, lambda: messagebox.showerror("Login Failed", "User is already logged in on another station.", parent=self.locker.root))

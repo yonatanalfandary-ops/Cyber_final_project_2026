@@ -185,11 +185,19 @@ class SessionGuard:
         self._hud_timer = self.root.after(1000, self._update_hud_loop)
 
     def _background_monitor(self):
-        cap = cv2.VideoCapture(0)
+        cap = None  # Start with no camera
         while self.is_running:
+            # --- THE FIX: Release the camera if paused or admin ---
             if self.is_paused or self.is_admin:
+                if cap is not None:
+                    cap.release()
+                    cap = None
                 time.sleep(0.5)
                 continue
+
+            # --- Re-acquire the camera if we are active ---
+            if cap is None:
+                cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # Use DSHOW here too!
 
             ret, frame = cap.read()
             if not ret: continue
@@ -216,12 +224,14 @@ class SessionGuard:
                 if time.time() - self.grace_start > 3:
                     print("⏸️ User Left. Pausing Session...")
                     self.is_running = False
-                    self.exit_status = "PAUSED"  # This tells main_client to lock, not logout!
+                    self.exit_status = "PAUSED"
 
                     if self.root:
                         self.root.after(0, self._safe_pause_cleanup)
             time.sleep(0.1)
-        cap.release()
+
+        if cap is not None:
+            cap.release()
 
     def _check_low_time(self):
         self.warning_shown = True
@@ -248,7 +258,14 @@ class SessionGuard:
     def _open_settings(self, event=None):
         self.is_paused = True
         self.root.attributes("-topmost", False)
-        settings = SettingsWindow(self.net, self.user['username'], self.root)
+
+        # THE FIX: Wait 600ms for the background thread to see it is paused
+        # and release the camera, THEN open the settings window.
+        self.root.after(600, self._show_settings_window)
+
+    def _show_settings_window(self):
+        # Also pass the user role here so the "Change Password" button shows up correctly for root!
+        settings = SettingsWindow(self.net, self.user['username'], self.root, role=self.user.get('role', 'user'))
         settings.show()
         self.is_paused = False
         self.root.attributes("-topmost", True)

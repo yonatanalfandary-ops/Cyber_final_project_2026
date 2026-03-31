@@ -57,7 +57,7 @@ class BiometricScanner:
 
         # --- START CAMERA ---
         print(f"👀 Scanning for {len(active_users)} active users...")
-        cap = cv2.VideoCapture(0)
+        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         start_time = time.time()
         found_user = None
 
@@ -134,7 +134,7 @@ class BiometricScanner:
 
         # --- START CAMERA ---
         print(f"🎯 Verifying face for: {target_user['username']}...")
-        cap = cv2.VideoCapture(0)
+        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         start_time = time.time()
         matched = False
 
