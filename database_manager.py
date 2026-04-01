@@ -102,6 +102,23 @@ class DatabaseManager:
         except:
             return []
 
+    def get_all_stations(self):
+        """Fetches all stations and their current state for the Admin Dashboard."""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+
+            # FIX: Added backticks around `current_user` to prevent MySQL reserved keyword conflict
+            cursor.execute("SELECT station_id, status, active_user AS `current_user` FROM stations")
+
+            stations = cursor.fetchall()
+            return stations
+        except Exception as e:
+            print(f"❌ Error fetching stations: {e}")
+            return []
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
+
     def create_gap_station(self):
         """Finds the lowest missing STATION_XX integer, creates it, and returns it."""
         existing_ids = self.get_all_station_ids()

@@ -267,9 +267,30 @@ class RentalServer:
                     else:
                         response = {"status": "FAILURE"}
 
-                # CASE 8: Fetch All Users
+                # CASE 8: Fetch All Users (UPDATED FOR DASHBOARD)
                 elif action == "FETCH_ALL_USERS":
                     users = self.db.get_all_users()
+                    stations = self.db.get_all_stations()
+
+                    # Build a quick map of active users to their connected stations
+                    active_user_map = {}
+                    for st in stations:
+                        if st.get('current_user'):
+                            active_user_map[st['current_user']] = {
+                                'station_id': st['station_id'],
+                                'status': st['status']  # Usually 'In Use' or 'Paused'
+                            }
+
+                    # Attach live connection status to each user
+                    for u in users:
+                        username = u['username']
+                        if username in active_user_map:
+                            u['status'] = active_user_map[username]['status']
+                            u['connected_station'] = active_user_map[username]['station_id']
+                        else:
+                            u['status'] = 'Offline'
+                            u['connected_station'] = 'None'
+
                     response = {"status": "SUCCESS", "users": users}
 
                 # CASE 9: Create User
@@ -287,17 +308,27 @@ class RentalServer:
                     success, msg = self.db.delete_user(request["username"])
                     response = {"status": "SUCCESS" if success else "FAILURE", "message": msg}
 
-                # CASE 11: Kill Switch (Admin Panel Command)
+                # CASE 11: Kill Switch (UPDATED KEY NAME)
                 elif action == "DELETE_STATION":
-                    target_id = request.get("target_id")
-                    self.db.delete_station(target_id)
-                    # If the deleted station is currently connected, fire the wipe payload!
-                    if target_id in self.active_stations:
-                        try:
-                            self.active_stations[target_id].create_and_send_message({"action": "COMMAND_UNREGISTER"})
-                        except:
-                            pass
-                    response = {"status": "SUCCESS"}
+                    target_id = request.get("station_id")  # admin_panel sends 'station_id'
+
+                    if target_id:
+                        self.db.delete_station(target_id)
+                        # If the deleted station is currently connected, fire the wipe payload!
+                        if target_id in self.active_stations:
+                            try:
+                                self.active_stations[target_id].create_and_send_message(
+                                    {"action": "COMMAND_UNREGISTER"})
+                            except:
+                                pass
+                        response = {"status": "SUCCESS"}
+                    else:
+                        response = {"status": "ERROR", "message": "Missing station ID"}
+
+                # CASE 12: Fetch Stations (NEW)
+                elif action == "FETCH_STATIONS":
+                    stations = self.db.get_all_stations()
+                    response = {"status": "SUCCESS", "stations": stations}
 
                 protocol.create_and_send_message(response)
 
