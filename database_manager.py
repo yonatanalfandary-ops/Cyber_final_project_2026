@@ -43,7 +43,7 @@ class DatabaseManager:
                             )
                         ''')
 
-            # 2. STATIONS TABLE (Updated)
+            # 2. STATIONS TABLE
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS stations (
                     station_id VARCHAR(50) PRIMARY KEY,
@@ -64,6 +64,29 @@ class DatabaseManager:
                 cursor.execute("ALTER TABLE stations ADD COLUMN revenue FLOAT DEFAULT 0.0")
             except:
                 pass
+
+            # 3. USER AUDIT TABLE
+            # Tracks every login ('Joined') and logout ('Left') event per user per station.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS user_audit (
+                    log_id INT AUTO_INCREMENT PRIMARY KEY,
+                    username VARCHAR(50) NOT NULL,
+                    station_id VARCHAR(50) NOT NULL,
+                    action VARCHAR(20) NOT NULL,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            # 4. STATION AUDIT TABLE
+            # Tracks every time a station comes Online or goes Offline.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS station_audit (
+                    log_id INT AUTO_INCREMENT PRIMARY KEY,
+                    station_id VARCHAR(50) NOT NULL,
+                    status VARCHAR(20) NOT NULL,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
 
             conn.commit()
             conn.close()
@@ -107,10 +130,7 @@ class DatabaseManager:
         try:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
-
-            # FIX: Added backticks around `current_user` to prevent MySQL reserved keyword conflict
             cursor.execute("SELECT station_id, status, active_user AS `current_user` FROM stations")
-
             stations = cursor.fetchall()
             return stations
         except Exception as e:
@@ -183,25 +203,136 @@ class DatabaseManager:
             return True
         except:
             return False
+
+    # ==========================================
+    # AUDIT LOGGING
+    # ==========================================
+
+    def log_user_action(self, username, station_id, action):
+        """
+        Inserts a row into user_audit.
+        action must be 'Joined' or 'Left'.
+        """
+        if not username or not station_id:
+            return
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            sql = "INSERT INTO user_audit (username, station_id, action) VALUES (%s, %s, %s)"
+            cursor.execute(sql, (username, station_id, action))
+            conn.commit()
+            print(f"📋 Audit: {username} {action} on {station_id}")
+        except Exception as e:
+            print(f"❌ User Audit Log Error: {e}")
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
+
+    def log_station_status(self, station_id, status):
+        """
+        Inserts a row into station_audit.
+        status must be 'Online' or 'Offline'.
+        """
+        if not station_id:
+            return
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            sql = "INSERT INTO station_audit (station_id, status) VALUES (%s, %s)"
+            cursor.execute(sql, (station_id, status))
+            conn.commit()
+            print(f"📋 Audit: {station_id} went {status}")
+        except Exception as e:
+            print(f"❌ Station Audit Log Error: {e}")
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
+
+    def get_user_audit(self, limit=300):
+        """Returns user_audit rows ordered newest-first."""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(
+                "SELECT username, station_id, action, timestamp "
+                "FROM user_audit ORDER BY timestamp DESC LIMIT %s",
+                (limit,)
+            )
+            rows = cursor.fetchall()
+            # Convert datetime objects to strings for JSON serialisation
+            for r in rows:
+                if isinstance(r.get('timestamp'), datetime):
+                    r['timestamp'] = r['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
+            return rows
+        except Exception as e:
+            print(f"❌ Fetch User Audit Error: {e}")
+            return []
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
+
+    def get_station_audit(self, limit=300):
+        """Returns station_audit rows ordered newest-first."""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(
+                "SELECT station_id, status, timestamp "
+                "FROM station_audit ORDER BY timestamp DESC LIMIT %s",
+                (limit,)
+            )
+            rows = cursor.fetchall()
+            for r in rows:
+                if isinstance(r.get('timestamp'), datetime):
+                    r['timestamp'] = r['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
+            return rows
+        except Exception as e:
+            print(f"❌ Fetch Station Audit Error: {e}")
+            return []
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
+
+    def clear_user_audit(self):
+        """Deletes all rows from user_audit."""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("TRUNCATE TABLE user_audit")
+            conn.commit()
+            print("🗑️  User audit log cleared.")
+            return True
+        except Exception as e:
+            print(f"❌ Clear User Audit Error: {e}")
+            return False
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
+
+    def clear_station_audit(self):
+        """Deletes all rows from station_audit."""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("TRUNCATE TABLE station_audit")
+            conn.commit()
+            print("🗑️  Station audit log cleared.")
+            return True
+        except Exception as e:
+            print(f"❌ Clear Station Audit Error: {e}")
+            return False
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
+
     # --- USER MANAGEMENT ---
 
     def create_user(self, username, password, full_name, role):
-        # --- NEW LOGIC: Enforce Password Rules ---
-        # If it's a standard user, completely wipe the password before saving
         if role == 'user':
             password = None
 
-        # Generate UUID manually to match your table
         new_id = str(uuid.uuid4())
         created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-
             sql = "INSERT INTO users (user_id, username, password, full_name, role, time_balance, created_at) VALUES (%s, %s, %s, %s, %s, 0, %s)"
             cursor.execute(sql, (new_id, username, password, full_name, role, created_at))
-
             conn.commit()
             return True, "User created"
         except mysql.connector.Error as err:
@@ -227,16 +358,11 @@ class DatabaseManager:
         try:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
-
-            # ADDED face_encoding to the SQL query
             cursor.execute("SELECT username, full_name, role, time_balance, face_encoding FROM users")
             users = cursor.fetchall()
-
-            # DECODE the face_encoding from JSON so the client can use it
             for u in users:
                 if u.get('face_encoding'):
                     u['face_encoding'] = json.loads(u['face_encoding'])
-
             return users
         except Exception as e:
             print(f"Error fetching users: {e}")
@@ -250,16 +376,10 @@ class DatabaseManager:
         try:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
-
-            # FORCE CASE SENSITIVITY FOR PASSWORD
-            # We use 'BINARY' to ensure 'Pass' != 'pass'
-            # (Username can stay case-insensitive if you prefer, or add BINARY there too)
             sql = "SELECT * FROM users WHERE username = %s AND BINARY password = %s"
-
             cursor.execute(sql, (username, password))
             user = cursor.fetchone()
             conn.close()
-
             if user:
                 if user['face_encoding']:
                     user['face_encoding'] = json.loads(user['face_encoding'])
@@ -273,7 +393,6 @@ class DatabaseManager:
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            # Prevent negative balance
             sql = "UPDATE users SET time_balance = GREATEST(0, time_balance + %s) WHERE username = %s"
             cursor.execute(sql, (minutes, username))
             conn.commit()
@@ -289,12 +408,9 @@ class DatabaseManager:
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-
             minutes_to_deduct = seconds_used / 60.0
-
             sql = "UPDATE users SET time_balance = GREATEST(0, time_balance - %s) WHERE username = %s"
             cursor.execute(sql, (minutes_to_deduct, username))
-
             conn.commit()
             return True
         except Exception as e:
@@ -311,25 +427,18 @@ class DatabaseManager:
             if field not in ['full_name', 'password', 'username', 'role']:
                 return False, "Invalid field"
 
-            # --- THE FIX: Strict Role Validation ---
             if field == 'role' and new_value not in ['root', 'user']:
                 return False, "Role must be either 'root' or 'user'."
-            # ---------------------------------------
 
-            # 1. Update the primary field
             sql = f"UPDATE users SET {field} = %s WHERE username = %s"
             cursor.execute(sql, (new_value, current_username))
-
-            # Capture the rowcount BEFORE executing any other queries
             rows_affected = cursor.rowcount
 
-            # 2. If promoting to root, wipe the time balance (Removed 'admin' logic)
             if field == 'role' and new_value == 'root':
                 zero_sql = "UPDATE users SET time_balance = 0 WHERE username = %s"
                 cursor.execute(zero_sql, (current_username,))
                 print(f"⚖️ Database: Wiped time_balance to 0 for promoted root user '{current_username}'")
 
-            # 3. Commit the transaction
             conn.commit()
 
             if rows_affected > 0:
@@ -363,7 +472,6 @@ class DatabaseManager:
             cursor.execute(
                 "SELECT username, role, full_name, face_encoding, time_balance FROM users WHERE time_balance > 0 AND face_encoding IS NOT NULL")
             users = cursor.fetchall()
-
             for u in users:
                 if u['face_encoding']:
                     u['face_encoding'] = json.loads(u['face_encoding'])

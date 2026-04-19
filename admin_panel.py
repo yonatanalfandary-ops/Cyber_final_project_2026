@@ -21,6 +21,9 @@ class AdminPanel:
         self.current_user_filter = "Show All"
         self._poll_timer = None
 
+        # Audit State
+        self.audit_mode = "user"   # "user" or "station"
+
     def show(self):
         self.root = tk.Tk()
 
@@ -40,25 +43,24 @@ class AdminPanel:
         style.configure("Treeview", font=("Arial", 12), rowheight=30, background="#ecf0f1", fieldbackground="#ecf0f1")
         style.configure("Treeview.Heading", font=("Arial", 13, "bold"), background="#bdc3c7")
 
+        # Audit Listbox style tag (configured per-widget below)
+        style.configure("Audit.TFrame", background="#2c3e50")
+
         # --- TOP CONTROL BAR (Header) ---
         top_bar = tk.Frame(self.root, bg="#34495e", height=60)
         top_bar.pack(side="top", fill="x")
-        top_bar.pack_propagate(False) # Prevent shrinking
+        top_bar.pack_propagate(False)
 
-        # Title (Left) - CHANGED: Saved to self.lbl_title so it can update dynamically
         self.lbl_title = tk.Label(top_bar, text=f"🔧 ADMIN PANEL | {self.admin_username}",
                                   font=("Arial", 18, "bold"), bg="#34495e", fg="#ecf0f1")
         self.lbl_title.pack(side="left", padx=20)
 
-        # Logout Button (Right)
         tk.Button(top_bar, text="LOGOUT", command=self.close,
                   font=("Arial", 12, "bold"), bg="#c0392b", fg="white", width=10).pack(side="right", padx=10, pady=10)
 
-        # Minimize Button (Right)
         tk.Button(top_bar, text="_ Minimize", command=self.minimize_window,
                   font=("Arial", 12, "bold"), bg="#7f8c8d", fg="white", width=10).pack(side="right", padx=10, pady=10)
 
-        # Settings Button
         tk.Button(top_bar, text="⚙ Settings", command=self.open_admin_settings,
                   font=("Arial", 12, "bold"), bg="#f39c12", fg="white", width=10).pack(side="right", padx=10, pady=10)
 
@@ -67,28 +69,34 @@ class AdminPanel:
         self.notebook.pack(fill="both", expand=True, padx=20, pady=20)
 
         # Create Tab Frames
-        self.tab_users_overview = tk.Frame(self.notebook, bg="#2c3e50")
+        self.tab_users_overview   = tk.Frame(self.notebook, bg="#2c3e50")
         self.tab_stations_overview = tk.Frame(self.notebook, bg="#2c3e50")
-        self.tab_management = tk.Frame(self.notebook, bg="#2c3e50")
+        self.tab_management       = tk.Frame(self.notebook, bg="#2c3e50")
+        self.tab_history          = tk.Frame(self.notebook, bg="#2c3e50")  # NEW
 
-        self.notebook.add(self.tab_users_overview, text="Users Overview")
+        self.notebook.add(self.tab_users_overview,   text="Users Overview")
         self.notebook.add(self.tab_stations_overview, text="Stations Overview")
-        self.notebook.add(self.tab_management, text="User Management")
+        self.notebook.add(self.tab_management,        text="User Management")
+        self.notebook.add(self.tab_history,           text="Usage History")   # NEW
 
         self._build_users_overview_tab()
         self._build_stations_overview_tab()
         self._build_management_tab()
+        self._build_history_tab()   # NEW
 
         # Initial Load & Start Polling
         self.fetch_users()
         self.poll_dashboard_data()
+
+        # Trigger an initial audit load after the window is drawn
+        self.root.after(100, self._load_audit_data)
+
         self.root.mainloop()
 
     # ==========================================
     # UI BUILDERS
     # ==========================================
     def _build_users_overview_tab(self):
-        # Filter Frame
         filter_frame = tk.Frame(self.tab_users_overview, bg="#2c3e50")
         filter_frame.pack(fill="x", pady=10)
 
@@ -103,7 +111,6 @@ class AdminPanel:
                            command=self._apply_user_filter, font=("Arial", 12),
                            bg="#2c3e50", fg="white", selectcolor="#34495e").pack(side="left", padx=10)
 
-        # Treeview
         cols = ("Username", "Connected Station", "Status", "Time Left")
         self.tree_users = ttk.Treeview(self.tab_users_overview, columns=cols, show="headings")
 
@@ -114,14 +121,12 @@ class AdminPanel:
         self.tree_users.pack(fill="both", expand=True, padx=10, pady=10)
 
     def _build_stations_overview_tab(self):
-        # Actions Frame
         actions_frame = tk.Frame(self.tab_stations_overview, bg="#2c3e50")
         actions_frame.pack(fill="x", pady=10)
 
         tk.Button(actions_frame, text="❌ Delete Selected Station", command=self.delete_station,
                   font=("Arial", 12, "bold"), bg="#c0392b", fg="white").pack(side="left", padx=10)
 
-        # Treeview
         cols = ("Station ID", "Status", "Current User")
         self.tree_stations = ttk.Treeview(self.tab_stations_overview, columns=cols, show="headings")
 
@@ -132,7 +137,6 @@ class AdminPanel:
         self.tree_stations.pack(fill="both", expand=True, padx=10, pady=10)
 
     def _build_management_tab(self):
-        # LEFT: User List
         left_frame = tk.Frame(self.tab_management, bg="#34495e", width=400)
         left_frame.pack(side="left", fill="y", padx=20, pady=20)
 
@@ -145,7 +149,6 @@ class AdminPanel:
         tk.Button(left_frame, text="Refresh List", command=self.fetch_users, bg="#7f8c8d", fg="white").pack(pady=10,
                                                                                                             fill="x")
 
-        # RIGHT: Actions
         right_frame = tk.Frame(self.tab_management, bg="#2c3e50")
         right_frame.pack(side="right", fill="both", expand=True, padx=20, pady=20)
 
@@ -174,15 +177,155 @@ class AdminPanel:
                                           font=("Arial", 12), bg="#8e44ad", fg="white", width=30)
         self.btn_edit_profile.pack(pady=8)
 
+    def _build_history_tab(self):
+        """Builds the Usage History tab with User/Station toggle and a scrollable log view."""
+
+        # ── Top: Toggle buttons + Refresh ──────────────────────────────────
+        control_frame = tk.Frame(self.tab_history, bg="#2c3e50")
+        control_frame.pack(fill="x", padx=20, pady=(15, 5))
+
+        tk.Label(control_frame, text="View:", font=("Arial", 13, "bold"),
+                 bg="#2c3e50", fg="white").pack(side="left", padx=(0, 10))
+
+        # We track which button is "active" by swapping their relief/colour.
+        self._btn_user_usage    = tk.Button(control_frame, text="👥 User Usage",
+                                            command=self._switch_to_user_audit,
+                                            font=("Arial", 12, "bold"), width=16,
+                                            bg="#2980b9", fg="white",   # starts active
+                                            relief="sunken")
+        self._btn_user_usage.pack(side="left", padx=5)
+
+        self._btn_station_usage = tk.Button(control_frame, text="🖥️ Station Usage",
+                                            command=self._switch_to_station_audit,
+                                            font=("Arial", 12, "bold"), width=16,
+                                            bg="#34495e", fg="white",   # starts inactive
+                                            relief="raised")
+        self._btn_station_usage.pack(side="left", padx=5)
+
+        tk.Button(control_frame, text="🔄 Refresh", command=self._refresh_audit,
+                  font=("Arial", 12), bg="#27ae60", fg="white", width=10).pack(side="left", padx=20)
+
+        tk.Button(control_frame, text="🗑️ Clear History", command=self._clear_audit,
+                  font=("Arial", 12), bg="#c0392b", fg="white", width=14).pack(side="left", padx=5)
+
+        # Status label (shows row count / loading message)
+        self.lbl_audit_status = tk.Label(control_frame, text="", font=("Arial", 11, "italic"),
+                                         bg="#2c3e50", fg="#bdc3c7")
+        self.lbl_audit_status.pack(side="left", padx=10)
+
+        # ── Bottom: Scrollable Listbox ──────────────────────────────────────
+        list_frame = tk.Frame(self.tab_history, bg="#2c3e50")
+        list_frame.pack(fill="both", expand=True, padx=20, pady=(5, 20))
+
+        scrollbar = tk.Scrollbar(list_frame, orient="vertical")
+
+        self.audit_listbox = tk.Listbox(
+            list_frame,
+            font=("Courier", 12),       # Monospace for aligned columns
+            bg="#1e272e",
+            fg="#dfe6e9",
+            selectbackground="#2980b9",
+            activestyle="none",
+            yscrollcommand=scrollbar.set,
+            borderwidth=0,
+            highlightthickness=0
+        )
+
+        scrollbar.config(command=self.audit_listbox.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.audit_listbox.pack(side="left", fill="both", expand=True)
+
+    # ==========================================
+    # AUDIT / HISTORY LOGIC
+    # ==========================================
+
+    def _switch_to_user_audit(self):
+        """Activates the User Usage view."""
+        self.audit_mode = "user"
+        # Visual feedback: active button looks pressed
+        self._btn_user_usage.config(bg="#2980b9", relief="sunken")
+        self._btn_station_usage.config(bg="#34495e", relief="raised")
+        # Defer network call so the button redraw happens first
+        self.root.after(0, self._load_audit_data)
+
+    def _switch_to_station_audit(self):
+        """Activates the Station Usage view."""
+        self.audit_mode = "station"
+        self._btn_station_usage.config(bg="#2980b9", relief="sunken")
+        self._btn_user_usage.config(bg="#34495e", relief="raised")
+        self.root.after(0, self._load_audit_data)
+
+    def _refresh_audit(self):
+        """Manual refresh — defers via after() for Tkinter thread safety."""
+        self.lbl_audit_status.config(text="Loading…")
+        self.root.after(0, self._load_audit_data)
+
+    def _load_audit_data(self):
+        """
+        Fetches the current audit log from the server and populates the listbox.
+        Called via self.root.after() to keep all Tkinter calls on the main thread.
+        """
+        self.audit_listbox.delete(0, tk.END)
+
+        try:
+            if self.audit_mode == "user":
+                response = self.net.send_request("FETCH_USER_AUDIT", {})
+                if response and response.get("status") == "SUCCESS":
+                    records = response.get("records", [])
+                    for rec in records:
+                        # Format: "justin Joined on STATION_01 at 2026-04-01 16:21:58"
+                        line = (f"{rec.get('username', '?'):<20} "
+                                f"{rec.get('action', '?'):<6} "
+                                f"on {rec.get('station_id', '?'):<12} "
+                                f"at {rec.get('timestamp', '?')}")
+                        self.audit_listbox.insert(tk.END, line)
+                    self.lbl_audit_status.config(text=f"{len(records)} record(s)")
+                else:
+                    self.lbl_audit_status.config(text="Failed to load.")
+
+            else:  # station mode
+                response = self.net.send_request("FETCH_STATION_AUDIT", {})
+                if response and response.get("status") == "SUCCESS":
+                    records = response.get("records", [])
+                    for rec in records:
+                        # Format: "STATION_01 went Online at 2026-04-02 16:19:54"
+                        line = (f"{rec.get('station_id', '?'):<14} "
+                                f"went {rec.get('status', '?'):<8} "
+                                f"at {rec.get('timestamp', '?')}")
+                        self.audit_listbox.insert(tk.END, line)
+                    self.lbl_audit_status.config(text=f"{len(records)} record(s)")
+                else:
+                    self.lbl_audit_status.config(text="Failed to load.")
+
+        except Exception as e:
+            print(f"Audit Load Error: {e}")
+            self.lbl_audit_status.config(text="Error loading audit data.")
+
+    def _clear_audit(self):
+        """Asks for confirmation then clears whichever audit log is currently active."""
+        label = "User Usage" if self.audit_mode == "user" else "Station Usage"
+        action = "CLEAR_USER_AUDIT" if self.audit_mode == "user" else "CLEAR_STATION_AUDIT"
+
+        msg = "Are you sure you want to permanently delete all " + label + " records?\nThis cannot be undone."
+        confirm = messagebox.askyesno("Clear History", msg, parent=self.root)
+        if not confirm:
+            return
+
+        response = self.net.send_request(action, {})
+        if response and response.get("status") == "SUCCESS":
+            # Reload via after() to stay on the main thread
+            self.root.after(0, self._load_audit_data)
+        else:
+            messagebox.showerror("Error", "Failed to clear audit log.", parent=self.root)
+
     # ==========================================
     # DASHBOARD LOGIC (REAL-TIME POLLING)
     # ==========================================
     def poll_dashboard_data(self):
-        """Fetches live data from the server every 5 seconds securely on the main thread."""
+        """Fetches live data from the server every 5 seconds on the main thread."""
         try:
-            # 1. Fetch Data
-            users_resp = self.net.send_request("FETCH_ALL_USERS", {})
-            stations_resp = self.net.send_request("FETCH_STATIONS", {})  # Ensure your server supports this endpoint
+            users_resp    = self.net.send_request("FETCH_ALL_USERS", {})
+            stations_resp = self.net.send_request("FETCH_STATIONS", {})
 
             if users_resp and users_resp.get("status") == "SUCCESS":
                 self.dashboard_users_data = users_resp.get("users", [])
@@ -190,14 +333,12 @@ class AdminPanel:
             if stations_resp and stations_resp.get("status") == "SUCCESS":
                 self.dashboard_stations_data = stations_resp.get("stations", [])
 
-            # 2. Update UIs
             self._update_users_tree()
             self._update_stations_tree()
 
         except Exception as e:
             print(f"Dashboard Polling Error: {e}")
 
-        # 3. Schedule next poll in 5000ms (5 seconds)
         self._poll_timer = self.root.after(5000, self.poll_dashboard_data)
 
     def _apply_user_filter(self):
@@ -205,19 +346,14 @@ class AdminPanel:
         self._update_users_tree()
 
     def _update_users_tree(self):
-        # Clear existing
         for item in self.tree_users.get_children():
             self.tree_users.delete(item)
 
-        # Sort Alphabetically by username
         sorted_users = sorted(self.dashboard_users_data, key=lambda x: x.get('username', '').lower())
 
         for u in sorted_users:
-            # Note: Ensure your server provides 'status' and 'connected_station' fields!
-            # If a user isn't connected to a station, default them to 'Offline'
             status = u.get('status', 'Offline')
 
-            # Apply Filtering
             if self.current_user_filter == "Show Only Online" and status == "Offline":
                 continue
             if self.current_user_filter == "Show Only Offline" and status != "Offline":
@@ -250,7 +386,6 @@ class AdminPanel:
         item = self.tree_stations.item(selected[0])
         station_id, status, current_user = item['values']
 
-        # Protection Logic
         if status in ['In Use', 'Paused']:
             messagebox.showerror("Error",
                                  "Cannot delete a station while it is in use or paused. Please wait for the user to log out.",
@@ -261,11 +396,10 @@ class AdminPanel:
                                       f"Are you sure you want to delete Station '{station_id}'?\nThis will execute the kill switch.",
                                       parent=self.root)
         if confirm:
-            # Trigger server-side deletion / kill switch
             response = self.net.send_request("DELETE_STATION", {"station_id": station_id})
             if response and response.get("status") == "SUCCESS":
                 messagebox.showinfo("Success", f"Station {station_id} deleted successfully.", parent=self.root)
-                self.poll_dashboard_data()  # Force immediate refresh
+                self.poll_dashboard_data()
             else:
                 messagebox.showerror("Error", f"Failed to delete station: {response.get('message', 'Unknown Error')}",
                                      parent=self.root)
@@ -273,7 +407,6 @@ class AdminPanel:
     # ==========================================
     # EXISTING USER MANAGEMENT LOGIC
     # ==========================================
-    # --- Minimize Logic ---
     def minimize_window(self):
         self.root.attributes('-topmost', False)
         self.root.iconify()
@@ -361,8 +494,8 @@ class AdminPanel:
         def submit():
             user = username_var.get().strip()
             full = fullname_var.get().strip()
-            pwd = password_var.get().strip()
-            rle = role_var.get()
+            pwd  = password_var.get().strip()
+            rle  = role_var.get()
 
             if not user or not full:
                 messagebox.showerror("Error", "Username and Full Name are required.", parent=dialog)
@@ -556,7 +689,6 @@ class AdminPanel:
         pass
 
     def close(self):
-        # Prevent memory leaks by canceling the polling timer before destroying the window
         if self._poll_timer is not None:
             self.root.after_cancel(self._poll_timer)
         self.root.destroy()

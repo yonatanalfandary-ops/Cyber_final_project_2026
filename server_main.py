@@ -48,7 +48,7 @@ class RentalServer:
             print(f"🔐 Secure AES Encrypted Connection Established with {addr}")
             # --- END HANDSHAKE ---
 
-            # --- NEW: STATION INITIALIZATION & SECURITY CHECK ---
+            # --- STATION INITIALIZATION & SECURITY CHECK ---
             init_req = protocol.get_message()
             if not init_req: return
 
@@ -58,21 +58,21 @@ class RentalServer:
                 station_id = self.db.create_gap_station()
                 protocol.create_and_send_message({"status": "SUCCESS", "new_id": station_id})
 
-
             elif init_action == "CONNECT_STATION":
                 station_id = init_req.get("station_id")
 
-                # --- TASK 12 FIX: Check for duplicate Station ID ---
+                # Check for duplicate Station ID
                 if station_id in self.active_stations:
                     print(f"⛔ Denied Connection: Station {station_id} is already in use!")
                     protocol.create_and_send_message({"status": "ERROR_STATION_IN_USE"})
-                    return  # Drop the duplicate connection instantly
+                    return
 
                 # SECURITY CHECK: Was it deleted from the DB while offline?
                 if not self.db.check_station_exists(station_id):
                     print(f"⛔ Denied Connection to wiped station: {station_id}")
                     protocol.create_and_send_message({"action": "COMMAND_UNREGISTER"})
                     return
+
                 protocol.create_and_send_message({"status": "SUCCESS"})
             else:
                 return  # Invalid boot sequence, drop connection.
@@ -81,6 +81,9 @@ class RentalServer:
             self.active_stations[station_id] = protocol
             self.db.update_station_state(station_id, 'Online', None)
             print(f"🖥️  {station_id} is Online.")
+
+            # --- AUDIT: Station came Online ---
+            self.db.log_station_status(station_id, 'Online')
 
             # --- MAIN LOOP ---
             while True:
@@ -92,7 +95,7 @@ class RentalServer:
 
                 response = {"status": "ERROR", "message": "Unknown Action"}
 
-                # CASE 1: User Login (Password)
+                # CASE 1: User Login (Password — Admin only)
                 if action == "LOGIN":
                     username = request.get("username")
                     password = request.get("password")
@@ -107,7 +110,7 @@ class RentalServer:
                                 "message": "Standard users cannot use passwords. Please use Face ID."
                             }
                         else:
-                            # --- TASK 15 FIX: Prevent Duplicate Admin Login ---
+                            # Prevent Duplicate Admin Login
                             requested_user = user['username']
                             is_duplicate = False
                             for sid, prot in self.active_stations.items():
@@ -118,10 +121,15 @@ class RentalServer:
                             if is_duplicate:
                                 print(f"⛔ Login Blocked: Admin {requested_user} is already active on another station.")
                                 protocol.create_and_send_message({"status": "ERROR_USER_ALREADY_LOGGED_IN"})
-                                continue  # Skip the rest of the loop, forcing client to handle the error
+                                continue
 
-                            # Proceed with Admin Login & Update Station State
-                            protocol.active_user = requested_user  # Track user in server memory
+                            # Proceed with Admin Login.
+                            # IMPORTANT: We deliberately do NOT set protocol.active_user here.
+                            # The client always follows up with a SYNC_STATE "In Use" call,
+                            # which is the single canonical place that sets active_user AND
+                            # writes the 'Joined' audit log. Setting it here would make
+                            # SYNC_STATE think the user is already active (a resume from pause)
+                            # and silently skip the audit log entry.
                             self.db.update_station_state(station_id, 'In Use', requested_user)
                             response = {
                                 "status": "SUCCESS",
@@ -136,7 +144,12 @@ class RentalServer:
 
                 # CASE 1b: Logout
                 elif action == "LOGOUT":
-                    protocol.active_user = None  # Clear user from server memory
+                    # --- AUDIT: Log the user leaving before clearing the active user ---
+                    departing_user = getattr(protocol, 'active_user', None)
+                    if departing_user:
+                        self.db.log_user_action(departing_user, station_id, 'Left')
+
+                    protocol.active_user = None
                     self.db.update_station_state(station_id, 'Online', None)
                     response = {"status": "SUCCESS"}
 
@@ -145,7 +158,7 @@ class RentalServer:
                     new_status = request.get("state_status")
                     active_username = request.get("active_user")
 
-                    # --- TASK 15 FIX: Prevent Duplicate Face ID / Normal User Login ---
+                    # Prevent Duplicate Face ID / Normal User Login
                     if new_status in ["In Use", "Paused"] and active_username:
                         is_duplicate = False
                         for sid, prot in self.active_stations.items():
@@ -156,11 +169,20 @@ class RentalServer:
                         if is_duplicate:
                             print(f"⛔ Sync Blocked: User {active_username} is already active on another station.")
                             protocol.create_and_send_message({"status": "ERROR_USER_ALREADY_LOGGED_IN"})
-                            continue  # Skip the rest of the loop, forcing client to handle the error
+                            continue
 
-                        protocol.active_user = active_username  # Track user in server memory
+                        # --- AUDIT: Log 'Joined' only on a genuinely new login session.
+                        # If the same user is resuming from a Paused state, protocol.active_user
+                        # is already set to their name, so we skip logging to avoid duplicates.
+                        if new_status == "In Use":
+                            previous_user = getattr(protocol, 'active_user', None)
+                            if previous_user != active_username:
+                                self.db.log_user_action(active_username, station_id, 'Joined')
+
+                        protocol.active_user = active_username
                     else:
-                        protocol.active_user = None  # Clear if returning to Online/Lock screen
+                        # Transitioning to Online (not a user session state)
+                        protocol.active_user = None
 
                     self.db.update_station_state(station_id, new_status, active_username)
                     response = {"status": "SUCCESS"}
@@ -197,20 +219,13 @@ class RentalServer:
                     new_face_data = request.get("face_data")
                     requester_username = request.get("requester_username")
 
-                    # 1. Check if it's a self-update by the currently actively logged-in user
                     is_self_update = (protocol.active_user == target_username)
-
-                    # 2. Try authenticating the regular user (if a password was provided)
                     user_auth = self.db.authenticate_user_login(target_username, password) if password else None
-
-                    # 3. Try authenticating the root user requesting the override
                     admin_auth = None
                     if requester_username and password:
                         admin_auth = self.db.authenticate_user_login(requester_username, password)
                     is_admin = admin_auth and admin_auth.get('role') == 'root'
 
-                    # AUTHORIZATION LOGIC:
-                    # Allow if it's an active self-update OR they provided a valid user password OR valid root password
                     if is_self_update or user_auth or is_admin:
                         success = self.db.update_user_face(target_username, new_face_data)
                         if success:
@@ -254,34 +269,28 @@ class RentalServer:
 
                     if self.db.add_time(username, minutes):
                         revenue_earned = float(minutes) * 0.5
-
-                        # --- THE FIX: Only add to station revenue if it's a positive purchase ---
                         if revenue_earned > 0:
                             self.db.add_station_revenue(station_id, revenue_earned)
-                            print(
-                                f"💰 Added {minutes} mins for {username} at {station_id}. Revenue: +${revenue_earned:.2f}")
+                            print(f"💰 Added {minutes} mins for {username} at {station_id}. Revenue: +${revenue_earned:.2f}")
                         else:
                             print(f"⚖️ Admin modified time for {username} by {minutes} mins. (Revenue unchanged)")
-
                         response = {"status": "SUCCESS"}
                     else:
                         response = {"status": "FAILURE"}
 
-                # CASE 8: Fetch All Users (UPDATED FOR DASHBOARD)
+                # CASE 8: Fetch All Users (for Dashboard)
                 elif action == "FETCH_ALL_USERS":
                     users = self.db.get_all_users()
                     stations = self.db.get_all_stations()
 
-                    # Build a quick map of active users to their connected stations
                     active_user_map = {}
                     for st in stations:
                         if st.get('current_user'):
                             active_user_map[st['current_user']] = {
                                 'station_id': st['station_id'],
-                                'status': st['status']  # Usually 'In Use' or 'Paused'
+                                'status': st['status']
                             }
 
-                    # Attach live connection status to each user
                     for u in users:
                         username = u['username']
                         if username in active_user_map:
@@ -308,13 +317,12 @@ class RentalServer:
                     success, msg = self.db.delete_user(request["username"])
                     response = {"status": "SUCCESS" if success else "FAILURE", "message": msg}
 
-                # CASE 11: Kill Switch (UPDATED KEY NAME)
+                # CASE 11: Kill Switch
                 elif action == "DELETE_STATION":
-                    target_id = request.get("station_id")  # admin_panel sends 'station_id'
+                    target_id = request.get("station_id")
 
                     if target_id:
                         self.db.delete_station(target_id)
-                        # If the deleted station is currently connected, fire the wipe payload!
                         if target_id in self.active_stations:
                             try:
                                 self.active_stations[target_id].create_and_send_message(
@@ -325,10 +333,30 @@ class RentalServer:
                     else:
                         response = {"status": "ERROR", "message": "Missing station ID"}
 
-                # CASE 12: Fetch Stations (NEW)
+                # CASE 12: Fetch Stations
                 elif action == "FETCH_STATIONS":
                     stations = self.db.get_all_stations()
                     response = {"status": "SUCCESS", "stations": stations}
+
+                # CASE 13: Fetch User Audit Log
+                elif action == "FETCH_USER_AUDIT":
+                    rows = self.db.get_user_audit()
+                    response = {"status": "SUCCESS", "records": rows}
+
+                # CASE 14: Fetch Station Audit Log
+                elif action == "FETCH_STATION_AUDIT":
+                    rows = self.db.get_station_audit()
+                    response = {"status": "SUCCESS", "records": rows}
+
+                # CASE 15: Clear User Audit Log
+                elif action == "CLEAR_USER_AUDIT":
+                    success = self.db.clear_user_audit()
+                    response = {"status": "SUCCESS" if success else "ERROR"}
+
+                # CASE 16: Clear Station Audit Log
+                elif action == "CLEAR_STATION_AUDIT":
+                    success = self.db.clear_station_audit()
+                    response = {"status": "SUCCESS" if success else "ERROR"}
 
                 protocol.create_and_send_message(response)
 
@@ -337,10 +365,19 @@ class RentalServer:
         finally:
             if station_id:
                 print(f"🔌 {station_id} Disconnected.")
-                # Mark offline and remove from Kill Switch registry
+
+                # --- AUDIT: Log any user that was still active when the socket dropped ---
+                orphaned_user = getattr(protocol, 'active_user', None)
+                if orphaned_user:
+                    self.db.log_user_action(orphaned_user, station_id, 'Left')
+
+                # --- AUDIT: Station went Offline ---
+                self.db.log_station_status(station_id, 'Offline')
+
                 self.db.update_station_state(station_id, 'Offline', None)
                 if station_id in self.active_stations:
                     del self.active_stations[station_id]
+
             client_socket.close()
 
     def start(self):
