@@ -233,16 +233,42 @@ class SessionGuard:
         if cap is not None:
             cap.release()
 
+    def _fetch_privacy_setting(self):
+        """Returns True if the privacy screen is enabled on the server."""
+        try:
+            response = self.net.send_request("GET_SETTING", {"key": "privacy_screen"})
+            if response and response.get("status") == "SUCCESS":
+                return response.get("value") == "1"
+        except Exception:
+            pass
+        return False
+
     def _check_low_time(self):
         self.warning_shown = True
         self.is_paused = True
-        ans = messagebox.askyesno("Low Time", "Less than 1 minute left! Add time?", parent=self.root)
+
+        # If privacy screen is on, place a fullscreen black overlay behind
+        # the dialog and rent window so the desktop isn't exposed.
+        overlay = None
+        if self._fetch_privacy_setting():
+            overlay = tk.Toplevel(self.root)
+            overlay.attributes('-fullscreen', True)
+            overlay.attributes('-topmost', True)
+            overlay.configure(bg='black')
+            overlay.update()  # Force draw before the dialog opens on top
+
+        dialog_parent = overlay if overlay else self.root
+        ans = messagebox.askyesno("Low Time", "Less than 1 minute left! Add time?", parent=dialog_parent)
         if ans:
             renter = RentWindow(self.net, self.user['username'])
-            added = renter.show(parent=self.root)
+            added = renter.show(parent=dialog_parent)
             if added > 0:
                 self._sync_balance_from_server()
                 self.warning_shown = False
+
+        if overlay:
+            overlay.destroy()
+
         self.is_paused = False
         print("▶ Session Resumed")
 
