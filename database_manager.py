@@ -289,6 +289,85 @@ class DatabaseManager:
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
+    def get_station_overview(self):
+        """
+        Returns each station's total all-time online duration in seconds,
+        calculated by pairing every Online event with its next Offline event
+        in station_audit.  Incomplete pairs (station still online) are skipped.
+        """
+        sql = """
+            SELECT
+                o.station_id,
+                COALESCE(SUM(TIMESTAMPDIFF(SECOND, o.timestamp, f.timestamp)), 0) AS total_seconds
+            FROM station_audit o
+            INNER JOIN station_audit f
+                ON  f.station_id = o.station_id
+                AND f.status     = 'Offline'
+                AND f.log_id     = (
+                    SELECT MIN(log_id)
+                    FROM   station_audit
+                    WHERE  station_id = o.station_id
+                    AND    status     = 'Offline'
+                    AND    log_id     > o.log_id
+                )
+            WHERE o.status = 'Online'
+            GROUP BY o.station_id
+            ORDER BY total_seconds DESC
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(sql)
+            rows = cursor.fetchall()
+            # Convert Decimal/int to plain int for JSON serialisation
+            for r in rows:
+                r['total_seconds'] = int(r['total_seconds'])
+            return rows
+        except Exception as e:
+            print(f"❌ Station Overview Error: {e}")
+            return []
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
+
+    def get_user_overview(self):
+        """
+        Returns each user's total all-time session duration in seconds,
+        calculated by pairing every Joined event with its next Left event
+        in user_audit.  Incomplete pairs (user still online) are skipped.
+        """
+        sql = """
+            SELECT
+                j.username,
+                COALESCE(SUM(TIMESTAMPDIFF(SECOND, j.timestamp, l.timestamp)), 0) AS total_seconds
+            FROM user_audit j
+            INNER JOIN user_audit l
+                ON  l.username = j.username
+                AND l.action   = 'Left'
+                AND l.log_id   = (
+                    SELECT MIN(log_id)
+                    FROM   user_audit
+                    WHERE  username = j.username
+                    AND    action   = 'Left'
+                    AND    log_id   > j.log_id
+                )
+            WHERE j.action = 'Joined'
+            GROUP BY j.username
+            ORDER BY total_seconds DESC
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(sql)
+            rows = cursor.fetchall()
+            for r in rows:
+                r['total_seconds'] = int(r['total_seconds'])
+            return rows
+        except Exception as e:
+            print(f"❌ User Overview Error: {e}")
+            return []
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
+
     def clear_user_audit(self):
         """Deletes all rows from user_audit."""
         try:

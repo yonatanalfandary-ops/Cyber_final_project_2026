@@ -348,12 +348,22 @@ class RentalServer:
                     rows = self.db.get_station_audit()
                     response = {"status": "SUCCESS", "records": rows}
 
-                # CASE 15: Clear User Audit Log
+                                # CASE 15: Station Overview (total online time per station)
+                elif action == "FETCH_STATION_OVERVIEW":
+                    rows = self.db.get_station_overview()
+                    response = {"status": "SUCCESS", "records": rows}
+
+                # CASE 16: User Overview (total session time per user)
+                elif action == "FETCH_USER_OVERVIEW":
+                    rows = self.db.get_user_overview()
+                    response = {"status": "SUCCESS", "records": rows}
+
+                # CASE 17: Clear User Audit Log
                 elif action == "CLEAR_USER_AUDIT":
                     success = self.db.clear_user_audit()
                     response = {"status": "SUCCESS" if success else "ERROR"}
 
-                # CASE 16: Clear Station Audit Log
+                # CASE 19: Clear Station Audit Log
                 elif action == "CLEAR_STATION_AUDIT":
                     success = self.db.clear_station_audit()
                     response = {"status": "SUCCESS" if success else "ERROR"}

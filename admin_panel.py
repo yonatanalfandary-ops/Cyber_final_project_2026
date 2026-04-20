@@ -22,7 +22,7 @@ class AdminPanel:
         self._poll_timer = None
 
         # Audit State
-        self.audit_mode = "user"   # "user" or "station"
+        self.audit_mode = "user_audit"  # "user_audit", "station_overview", "user_overview"
 
     def show(self):
         self.root = tk.Tk()
@@ -89,7 +89,7 @@ class AdminPanel:
         self.poll_dashboard_data()
 
         # Trigger an initial audit load after the window is drawn
-        self.root.after(100, self._load_audit_data)
+        self.root.after(100, self._load_current_view)
 
         self.root.mainloop()
 
@@ -178,29 +178,36 @@ class AdminPanel:
         self.btn_edit_profile.pack(pady=8)
 
     def _build_history_tab(self):
-        """Builds the Usage History tab with User/Station toggle and a scrollable log view."""
+        """Builds the Usage History tab with three toggle views."""
 
-        # ── Top: Toggle buttons + Refresh ──────────────────────────────────
+        # ── Top: Toggle buttons + Refresh + Clear ──────────────────────────
         control_frame = tk.Frame(self.tab_history, bg="#2c3e50")
         control_frame.pack(fill="x", padx=20, pady=(15, 5))
 
         tk.Label(control_frame, text="View:", font=("Arial", 13, "bold"),
                  bg="#2c3e50", fg="white").pack(side="left", padx=(0, 10))
 
-        # We track which button is "active" by swapping their relief/colour.
-        self._btn_user_usage    = tk.Button(control_frame, text="👥 User Usage",
-                                            command=self._switch_to_user_audit,
-                                            font=("Arial", 12, "bold"), width=16,
-                                            bg="#2980b9", fg="white",   # starts active
-                                            relief="sunken")
-        self._btn_user_usage.pack(side="left", padx=5)
+        # Three toggle buttons; active one is sunken/blue, others are raised/grey.
+        self._btn_user_audit = tk.Button(
+            control_frame, text="👥 User Audit",
+            command=self._switch_to_user_audit,
+            font=("Arial", 12, "bold"), width=14,
+            bg="#2980b9", fg="white", relief="sunken")   # starts active
+        self._btn_user_audit.pack(side="left", padx=5)
 
-        self._btn_station_usage = tk.Button(control_frame, text="🖥️ Station Usage",
-                                            command=self._switch_to_station_audit,
-                                            font=("Arial", 12, "bold"), width=16,
-                                            bg="#34495e", fg="white",   # starts inactive
-                                            relief="raised")
-        self._btn_station_usage.pack(side="left", padx=5)
+        self._btn_station_overview = tk.Button(
+            control_frame, text="🖥️ Station Overview",
+            command=self._switch_to_station_overview,
+            font=("Arial", 12, "bold"), width=18,
+            bg="#34495e", fg="white", relief="raised")
+        self._btn_station_overview.pack(side="left", padx=5)
+
+        self._btn_user_overview = tk.Button(
+            control_frame, text="👤 User Overview",
+            command=self._switch_to_user_overview,
+            font=("Arial", 12, "bold"), width=15,
+            bg="#34495e", fg="white", relief="raised")
+        self._btn_user_overview.pack(side="left", padx=5)
 
         tk.Button(control_frame, text="🔄 Refresh", command=self._refresh_audit,
                   font=("Arial", 12), bg="#27ae60", fg="white", width=10).pack(side="left", padx=20)
@@ -208,103 +215,183 @@ class AdminPanel:
         tk.Button(control_frame, text="🗑️ Clear History", command=self._clear_audit,
                   font=("Arial", 12), bg="#c0392b", fg="white", width=14).pack(side="left", padx=5)
 
-        # Status label (shows row count / loading message)
         self.lbl_audit_status = tk.Label(control_frame, text="", font=("Arial", 11, "italic"),
                                          bg="#2c3e50", fg="#bdc3c7")
         self.lbl_audit_status.pack(side="left", padx=10)
 
-        # ── Bottom: Scrollable Listbox ──────────────────────────────────────
-        list_frame = tk.Frame(self.tab_history, bg="#2c3e50")
-        list_frame.pack(fill="both", expand=True, padx=20, pady=(5, 20))
+        # ── Content area: two frames, only one visible at a time ───────────
+        # Frame A — raw audit log (Listbox, monospace)
+        self._frame_audit = tk.Frame(self.tab_history, bg="#2c3e50")
+        self._frame_audit.pack(fill="both", expand=True, padx=20, pady=(5, 20))
 
-        scrollbar = tk.Scrollbar(list_frame, orient="vertical")
-
+        scrollbar_a = tk.Scrollbar(self._frame_audit, orient="vertical")
         self.audit_listbox = tk.Listbox(
-            list_frame,
-            font=("Courier", 12),       # Monospace for aligned columns
-            bg="#1e272e",
-            fg="#dfe6e9",
+            self._frame_audit,
+            font=("Courier", 12),
+            bg="#1e272e", fg="#dfe6e9",
             selectbackground="#2980b9",
             activestyle="none",
-            yscrollcommand=scrollbar.set,
-            borderwidth=0,
-            highlightthickness=0
+            yscrollcommand=scrollbar_a.set,
+            borderwidth=0, highlightthickness=0
         )
-
-        scrollbar.config(command=self.audit_listbox.yview)
-        scrollbar.pack(side="right", fill="y")
+        scrollbar_a.config(command=self.audit_listbox.yview)
+        scrollbar_a.pack(side="right", fill="y")
         self.audit_listbox.pack(side="left", fill="both", expand=True)
+
+        # Frame B — overview Treeview (shared by Station Overview & User Overview)
+        self._frame_overview = tk.Frame(self.tab_history, bg="#2c3e50")
+        # (NOT packed yet — hidden until an overview mode is selected)
+
+        self.overview_tree = ttk.Treeview(self._frame_overview, show="headings")
+        scrollbar_b = tk.Scrollbar(self._frame_overview, orient="vertical",
+                                   command=self.overview_tree.yview)
+        self.overview_tree.configure(yscrollcommand=scrollbar_b.set)
+        scrollbar_b.pack(side="right", fill="y")
+        self.overview_tree.pack(fill="both", expand=True)
 
     # ==========================================
     # AUDIT / HISTORY LOGIC
     # ==========================================
 
-    def _switch_to_user_audit(self):
-        """Activates the User Usage view."""
-        self.audit_mode = "user"
-        # Visual feedback: active button looks pressed
-        self._btn_user_usage.config(bg="#2980b9", relief="sunken")
-        self._btn_station_usage.config(bg="#34495e", relief="raised")
-        # Defer network call so the button redraw happens first
-        self.root.after(0, self._load_audit_data)
+    @staticmethod
+    def _format_duration(total_seconds):
+        """Converts a raw second count into a human-readable string: e.g. '2h 15m 30s'."""
+        if not total_seconds or total_seconds <= 0:
+            return "0s"
+        h = total_seconds // 3600
+        m = (total_seconds % 3600) // 60
+        s = total_seconds % 60
+        if h > 0:
+            return f"{h}h {m}m {s}s"
+        elif m > 0:
+            return f"{m}m {s}s"
+        return f"{s}s"
 
-    def _switch_to_station_audit(self):
-        """Activates the Station Usage view."""
-        self.audit_mode = "station"
-        self._btn_station_usage.config(bg="#2980b9", relief="sunken")
-        self._btn_user_usage.config(bg="#34495e", relief="raised")
-        self.root.after(0, self._load_audit_data)
+    def _set_active_toggle(self, active_btn):
+        """Updates toggle button visuals so only active_btn appears pressed."""
+        all_btns = [self._btn_user_audit, self._btn_station_overview, self._btn_user_overview]
+        for btn in all_btns:
+            if btn is active_btn:
+                btn.config(bg="#2980b9", relief="sunken")
+            else:
+                btn.config(bg="#34495e", relief="raised")
+
+    def _show_audit_frame(self):
+        """Swaps the content area to show the raw-log Listbox."""
+        self._frame_overview.pack_forget()
+        self._frame_audit.pack(fill="both", expand=True, padx=20, pady=(5, 20))
+
+    def _show_overview_frame(self):
+        """Swaps the content area to show the Overview Treeview."""
+        self._frame_audit.pack_forget()
+        self._frame_overview.pack(fill="both", expand=True, padx=20, pady=(5, 20))
+
+    def _switch_to_user_audit(self):
+        self.audit_mode = "user_audit"
+        self._set_active_toggle(self._btn_user_audit)
+        self._show_audit_frame()
+        self.root.after(0, self._load_current_view)
+
+    def _switch_to_station_overview(self):
+        self.audit_mode = "station_overview"
+        self._set_active_toggle(self._btn_station_overview)
+        self._show_overview_frame()
+        # Configure treeview columns for Station Overview
+        self.overview_tree.config(columns=("Station ID", "Total Online Time"))
+        for col, anchor, width in [("Station ID", "center", 200), ("Total Online Time", "center", 250)]:
+            self.overview_tree.heading(col, text=col)
+            self.overview_tree.column(col, anchor=anchor, width=width)
+        self.root.after(0, self._load_current_view)
+
+    def _switch_to_user_overview(self):
+        self.audit_mode = "user_overview"
+        self._set_active_toggle(self._btn_user_overview)
+        self._show_overview_frame()
+        # Configure treeview columns for User Overview
+        self.overview_tree.config(columns=("Username", "Total Usage Time"))
+        for col, anchor, width in [("Username", "center", 200), ("Total Usage Time", "center", 250)]:
+            self.overview_tree.heading(col, text=col)
+            self.overview_tree.column(col, anchor=anchor, width=width)
+        self.root.after(0, self._load_current_view)
 
     def _refresh_audit(self):
         """Manual refresh — defers via after() for Tkinter thread safety."""
         self.lbl_audit_status.config(text="Loading…")
-        self.root.after(0, self._load_audit_data)
+        self.root.after(0, self._load_current_view)
+
+    def _load_current_view(self):
+        """Dispatcher: loads data for whichever mode is currently active."""
+        if self.audit_mode == "user_audit":
+            self._load_audit_data()
+        else:
+            self._load_overview_data()
 
     def _load_audit_data(self):
-        """
-        Fetches the current audit log from the server and populates the listbox.
-        Called via self.root.after() to keep all Tkinter calls on the main thread.
-        """
+        """Populates the raw-log Listbox for User Audit mode."""
         self.audit_listbox.delete(0, tk.END)
-
         try:
-            if self.audit_mode == "user":
-                response = self.net.send_request("FETCH_USER_AUDIT", {})
-                if response and response.get("status") == "SUCCESS":
-                    records = response.get("records", [])
-                    for rec in records:
-                        # Format: "justin Joined on STATION_01 at 2026-04-01 16:21:58"
-                        line = (f"{rec.get('username', '?'):<20} "
-                                f"{rec.get('action', '?'):<6} "
-                                f"on {rec.get('station_id', '?'):<12} "
-                                f"at {rec.get('timestamp', '?')}")
-                        self.audit_listbox.insert(tk.END, line)
-                    self.lbl_audit_status.config(text=f"{len(records)} record(s)")
-                else:
-                    self.lbl_audit_status.config(text="Failed to load.")
-
-            else:  # station mode
-                response = self.net.send_request("FETCH_STATION_AUDIT", {})
-                if response and response.get("status") == "SUCCESS":
-                    records = response.get("records", [])
-                    for rec in records:
-                        # Format: "STATION_01 went Online at 2026-04-02 16:19:54"
-                        line = (f"{rec.get('station_id', '?'):<14} "
-                                f"went {rec.get('status', '?'):<8} "
-                                f"at {rec.get('timestamp', '?')}")
-                        self.audit_listbox.insert(tk.END, line)
-                    self.lbl_audit_status.config(text=f"{len(records)} record(s)")
-                else:
-                    self.lbl_audit_status.config(text="Failed to load.")
-
+            response = self.net.send_request("FETCH_USER_AUDIT", {})
+            if response and response.get("status") == "SUCCESS":
+                records = response.get("records", [])
+                for rec in records:
+                    line = (f"{rec.get('username', '?'):<20} "
+                            f"{rec.get('action', '?'):<6} "
+                            f"on {rec.get('station_id', '?'):<12} "
+                            f"at {rec.get('timestamp', '?')}")
+                    self.audit_listbox.insert(tk.END, line)
+                self.lbl_audit_status.config(text=f"{len(records)} record(s)")
+            else:
+                self.lbl_audit_status.config(text="Failed to load.")
         except Exception as e:
             print(f"Audit Load Error: {e}")
             self.lbl_audit_status.config(text="Error loading audit data.")
 
+    def _load_overview_data(self):
+        """Populates the Treeview for Station Overview or User Overview mode."""
+        for row in self.overview_tree.get_children():
+            self.overview_tree.delete(row)
+        try:
+            if self.audit_mode == "station_overview":
+                response = self.net.send_request("FETCH_STATION_OVERVIEW", {})
+                if response and response.get("status") == "SUCCESS":
+                    records = response.get("records", [])
+                    for rec in records:
+                        duration = self._format_duration(rec.get("total_seconds", 0))
+                        self.overview_tree.insert("", tk.END, values=(
+                            rec.get("station_id", "?"),
+                            duration
+                        ))
+                    self.lbl_audit_status.config(text=f"{len(records)} station(s)")
+                else:
+                    self.lbl_audit_status.config(text="Failed to load.")
+
+            else:  # user_overview
+                response = self.net.send_request("FETCH_USER_OVERVIEW", {})
+                if response and response.get("status") == "SUCCESS":
+                    records = response.get("records", [])
+                    for rec in records:
+                        duration = self._format_duration(rec.get("total_seconds", 0))
+                        self.overview_tree.insert("", tk.END, values=(
+                            rec.get("username", "?"),
+                            duration
+                        ))
+                    self.lbl_audit_status.config(text=f"{len(records)} user(s)")
+                else:
+                    self.lbl_audit_status.config(text="Failed to load.")
+        except Exception as e:
+            print(f"Overview Load Error: {e}")
+            self.lbl_audit_status.config(text="Error loading data.")
+
     def _clear_audit(self):
-        """Asks for confirmation then clears whichever audit log is currently active."""
-        label = "User Usage" if self.audit_mode == "user" else "Station Usage"
-        action = "CLEAR_USER_AUDIT" if self.audit_mode == "user" else "CLEAR_STATION_AUDIT"
+        """Clears the underlying audit table for the current view."""
+        mode_map = {
+            "user_audit":        ("User Audit",        "CLEAR_USER_AUDIT"),
+            "station_overview":  ("Station Overview",  "CLEAR_STATION_AUDIT"),
+            "user_overview":     ("User Overview",     "CLEAR_USER_AUDIT"),
+        }
+        label, action = mode_map.get(self.audit_mode, ("", ""))
+        if not action:
+            return
 
         msg = "Are you sure you want to permanently delete all " + label + " records?\nThis cannot be undone."
         confirm = messagebox.askyesno("Clear History", msg, parent=self.root)
@@ -313,8 +400,7 @@ class AdminPanel:
 
         response = self.net.send_request(action, {})
         if response and response.get("status") == "SUCCESS":
-            # Reload via after() to stay on the main thread
-            self.root.after(0, self._load_audit_data)
+            self.root.after(0, self._load_current_view)
         else:
             messagebox.showerror("Error", "Failed to clear audit log.", parent=self.root)
 
