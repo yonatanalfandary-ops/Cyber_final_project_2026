@@ -114,6 +114,32 @@ class LockScreen:
         print("⚠ EMERGENCY EXIT")
         os._exit(0)
 
+    def blank(self):
+        """Hides all visible content but keeps the fullscreen black window.
+        Used by the privacy screen feature so the desktop isn't exposed
+        while the face-scan camera window is open on top.
+        """
+        if not self.root: return
+        self.lbl_msg.pack_forget()
+        self.entry_frame.pack_forget()
+        self.root.configure(cursor='none')
+        self.root.update()
+
+    def unblank(self):
+        """Restores the lock screen to its idle 'Press SPACE' state after blanking."""
+        if not self.root: return
+        self.username_var.set('')
+        self.entry_user.config(state='normal')
+        self.btn_submit.config(state='normal')
+        self.lbl_msg.config(text='Press SPACE to Start Session', fg='#555555')
+        self.lbl_msg.pack(expand=True)
+        self.root.configure(cursor='none')
+        # Restore key bindings
+        self.root.bind('<space>', self._trigger_wake)
+        self.root.bind('<Button-1>', self._trigger_wake)
+        self.root.focus_force()
+        self.root.update()
+
     def lock(self):
         if not self.is_locked:
             self.is_locked = True

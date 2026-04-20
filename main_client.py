@@ -103,7 +103,8 @@ class MainClient:
                                 "active_user": self.current_user['username']
                             })
 
-                            smart_lock = SmartLockScreen(self.current_user, self.scanner)
+                            privacy = self._fetch_privacy_setting()
+                            smart_lock = SmartLockScreen(self.current_user, self.scanner, privacy_screen=privacy)
                             lock_result = smart_lock.show()
 
                             if lock_result == "RESUME":
@@ -133,6 +134,16 @@ class MainClient:
         self.net.send_request("LOGOUT", {})
         self.current_user = None
 
+    def _fetch_privacy_setting(self):
+        """Returns True if the privacy screen is enabled on the server."""
+        try:
+            response = self.net.send_request("GET_SETTING", {"key": "privacy_screen"})
+            if response and response.get("status") == "SUCCESS":
+                return response.get("value") == "1"
+        except Exception:
+            pass
+        return False
+
     def process_login(self, username):
         """Handles the 4-step login and routing logic."""
         print(f"🔍 Checking database for user: {username}...")
@@ -161,7 +172,11 @@ class MainClient:
             return
 
         print("📸 Face ID found. Starting targeted scan...")
-        self.locker.root.withdraw()
+        privacy = self._fetch_privacy_setting()
+        if privacy:
+            self.locker.blank()   # Keep black window visible behind camera
+        else:
+            self.locker.root.withdraw()
         match = self.scanner.scan_specific_user(target_user)
 
         if match:
@@ -223,11 +238,17 @@ class MainClient:
                     self.locker.unlock()
                 else:
                     print("❌ Payment cancelled. Returning to Lock Screen.")
-                    self.locker.root.deiconify()
+                    if privacy:
+                        self.locker.unblank()
+                    else:
+                        self.locker.root.deiconify()
                     self.locker.reset_to_start()
         else:
             print("🚫 Face match failed. Access Denied.")
-            self.locker.root.deiconify()
+            if privacy:
+                self.locker.unblank()
+            else:
+                self.locker.root.deiconify()
             self.locker.reset_to_start("Face match failed. Access Denied.")
 
     def _trigger_manual_login(self):

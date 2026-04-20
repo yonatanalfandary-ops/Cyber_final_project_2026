@@ -4,9 +4,10 @@ import tkinter as tk
 class SmartLockScreen:
     """The black screen that appears when a user walks away."""
 
-    def __init__(self, user, scanner):
+    def __init__(self, user, scanner, privacy_screen=False):
         self.user = user
         self.scanner = scanner
+        self.privacy_screen = privacy_screen
         self.result = "TIMEOUT"
         self.time_left = 120  # 2 minutes in seconds
 
@@ -56,7 +57,15 @@ class SmartLockScreen:
         print("📸 Resuming: Scanning face...")
         # Temporarily pause the countdown while the camera is open
         self.root.after_cancel(self.timer_id)
-        self.root.withdraw()  # Hide black screen to show camera window
+
+        if self.privacy_screen:
+            # Privacy mode: keep the black window visible as a background.
+            # Just clear the label so the screen looks blank, then the
+            # OpenCV camera window will appear on top of it.
+            self.lbl_display.config(text="")
+            self.root.update()
+        else:
+            self.root.withdraw()  # Original behaviour: expose the desktop
 
         match = self.scanner.scan_specific_user(self.user)
 
@@ -66,9 +75,10 @@ class SmartLockScreen:
             self.root.destroy()
         else:
             print("🚫 Face match failed. Returning to Smart Lock.")
-            self.root.deiconify()  # Bring the black screen back
+            if not self.privacy_screen:
+                self.root.deiconify()  # Restore window if it was withdrawn
             self.root.focus_force()
-            # Resume the countdown
+            # Resume the countdown (this also restores the label text)
             self.timer_id = self.root.after(1000, self._update_timer)
 
     def _on_timeout(self):

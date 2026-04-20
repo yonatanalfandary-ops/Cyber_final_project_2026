@@ -88,6 +88,21 @@ class DatabaseManager:
                 )
             ''')
 
+            # 5. SETTINGS TABLE
+            # Stores global server-side configuration as key/value pairs.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS settings (
+                    setting_key   VARCHAR(50)  PRIMARY KEY,
+                    setting_value VARCHAR(255) NOT NULL
+                )
+            ''')
+
+            # Seed default settings if they don't exist yet
+            cursor.execute("""
+                INSERT IGNORE INTO settings (setting_key, setting_value)
+                VALUES ('privacy_screen', '0')
+            """)
+
             conn.commit()
             conn.close()
             print("✅ Database Schema Loaded.")
@@ -394,6 +409,42 @@ class DatabaseManager:
             return True
         except Exception as e:
             print(f"❌ Clear Station Audit Error: {e}")
+            return False
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
+
+    # ==========================================
+    # SETTINGS
+    # ==========================================
+
+    def get_setting(self, key):
+        """Returns the value for a setting key, or None if not found."""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("SELECT setting_value FROM settings WHERE setting_key = %s", (key,))
+            row = cursor.fetchone()
+            return row['setting_value'] if row else None
+        except Exception as e:
+            print(f"❌ Get Setting Error: {e}")
+            return None
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
+
+    def set_setting(self, key, value):
+        """Inserts or updates a setting key/value pair."""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO settings (setting_key, setting_value) VALUES (%s, %s) "
+                "ON DUPLICATE KEY UPDATE setting_value = %s",
+                (key, value, value)
+            )
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"❌ Set Setting Error: {e}")
             return False
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()

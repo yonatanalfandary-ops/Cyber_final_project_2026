@@ -20,6 +20,7 @@ class AdminPanel:
         # State
         self.current_user_filter = "Show All"
         self._poll_timer = None
+        self.privacy_screen_on = False  # Cached state of the privacy screen setting
 
         # Audit State
         self.audit_mode = "user_audit"  # "user_audit", "station_overview", "user_overview"
@@ -64,6 +65,14 @@ class AdminPanel:
         tk.Button(top_bar, text="⚙ Settings", command=self.open_admin_settings,
                   font=("Arial", 12, "bold"), bg="#f39c12", fg="white", width=10).pack(side="right", padx=10, pady=10)
 
+        # Privacy Screen Toggle
+        self.btn_privacy = tk.Button(
+            top_bar, text="🔒 Privacy: OFF",
+            command=self._toggle_privacy_screen,
+            font=("Arial", 12, "bold"), bg="#7f8c8d", fg="white", width=14
+        )
+        self.btn_privacy.pack(side="right", padx=10, pady=10)
+
         # --- MAIN CONTENT (Tabs) ---
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill="both", expand=True, padx=20, pady=20)
@@ -90,6 +99,9 @@ class AdminPanel:
 
         # Trigger an initial audit load after the window is drawn
         self.root.after(100, self._load_current_view)
+
+        # Fetch the privacy screen setting and update the button label
+        self.root.after(150, self._fetch_privacy_setting)
 
         self.root.mainloop()
 
@@ -403,6 +415,38 @@ class AdminPanel:
             self.root.after(0, self._load_current_view)
         else:
             messagebox.showerror("Error", "Failed to clear audit log.", parent=self.root)
+
+
+    # ==========================================
+    # PRIVACY SCREEN SETTING
+    # ==========================================
+
+    def _fetch_privacy_setting(self):
+        """Reads the current privacy_screen value from the server and syncs the button."""
+        try:
+            response = self.net.send_request("GET_SETTING", {"key": "privacy_screen"})
+            if response and response.get("status") == "SUCCESS":
+                self.privacy_screen_on = (response.get("value") == "1")
+                self._update_privacy_btn()
+        except Exception as e:
+            print(f"Privacy fetch error: {e}")
+
+    def _toggle_privacy_screen(self):
+        """Flips the privacy_screen setting on the server and updates the button."""
+        new_value = "0" if self.privacy_screen_on else "1"
+        response = self.net.send_request("SET_SETTING", {"key": "privacy_screen", "value": new_value})
+        if response and response.get("status") == "SUCCESS":
+            self.privacy_screen_on = (new_value == "1")
+            self._update_privacy_btn()
+        else:
+            messagebox.showerror("Error", "Failed to update privacy screen setting.", parent=self.root)
+
+    def _update_privacy_btn(self):
+        """Refreshes the privacy toggle button text and colour to match current state."""
+        if self.privacy_screen_on:
+            self.btn_privacy.config(text="🔒 Privacy: ON",  bg="#27ae60")
+        else:
+            self.btn_privacy.config(text="🔒 Privacy: OFF", bg="#7f8c8d")
 
     # ==========================================
     # DASHBOARD LOGIC (REAL-TIME POLLING)
