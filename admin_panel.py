@@ -154,12 +154,15 @@ class AdminPanel:
 
         tk.Label(left_frame, text="User Database", font=("Arial", 14, "bold"), bg="#34495e", fg="white").pack(pady=10)
 
+        # Pack the Refresh button first so it always reserves space at the bottom.
+        # If the listbox were packed first with expand=True it would absorb all
+        # available height and push this button out of view.
+        tk.Button(left_frame, text="Refresh List", command=self.fetch_users,
+                  bg="#7f8c8d", fg="white").pack(side="bottom", pady=10, fill="x")
+
         self.listbox = tk.Listbox(left_frame, font=("Arial", 14), width=30, height=20)
         self.listbox.pack(padx=10, pady=10, fill="both", expand=True)
         self.listbox.bind('<<ListboxSelect>>', self.on_select)
-
-        tk.Button(left_frame, text="Refresh List", command=self.fetch_users, bg="#7f8c8d", fg="white").pack(pady=10,
-                                                                                                            fill="x")
 
         right_frame = tk.Frame(self.tab_management, bg="#2c3e50")
         right_frame.pack(side="right", fill="both", expand=True, padx=20, pady=20)
