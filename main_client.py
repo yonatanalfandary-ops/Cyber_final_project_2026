@@ -17,7 +17,7 @@ from session_guard import SessionGuard
 from smart_lockscreen import SmartLockScreen
 
 # CONFIG
-SERVER_IP = "10.0.0.24" #"172.16.63.55"
+SERVER_IP = "10.0.0.24"  #"172.16.63.55"
 SYNC_INTERVAL = 5
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'station_config.json')
 
@@ -249,7 +249,15 @@ class MainClient:
                 self.locker.unblank()
             else:
                 self.locker.root.deiconify()
-            self.locker.reset_to_start("Face match failed. Access Denied.")
+
+            if target_user.get('role') == 'root':
+                # Admin face scan failed — fall back to manual password login
+                # rather than sending them back to the lock screen.
+                print("🔑 Admin detected — routing to manual login.")
+                self.locker.reset_to_start("")
+                self._trigger_manual_login()
+            else:
+                self.locker.reset_to_start("Face match failed. Access Denied.")
 
     def _trigger_manual_login(self):
         """Helper to unlock screen and open manual login."""
