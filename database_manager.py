@@ -1,3 +1,4 @@
+import hashlib
 import mysql.connector
 from mysql.connector import errorcode
 import json
@@ -110,11 +111,54 @@ class DatabaseManager:
         except mysql.connector.Error as err:
             print(f"❌ Database Init Error: {err}")
 
+    @staticmethod
+    def _hash_password(plain_text):
+        """Returns the SHA-256 hex digest of a plain-text password string."""
+        return hashlib.sha256(plain_text.encode('utf-8')).hexdigest()
+
+    @staticmethod
+    def _is_hashed(value):
+        """Returns True if value already looks like a SHA-256 hex digest (64 hex chars)."""
+        if not value or len(value) != 64:
+            return False
+        try:
+            int(value, 16)
+            return True
+        except ValueError:
+            return False
+
+    def _migrate_plain_passwords(self):
+        """
+        One-time migration: finds any admin (root) accounts whose password is
+        still stored as plain text and re-hashes them with SHA-256.
+        Safe to call on every startup — already-hashed passwords are skipped.
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("SELECT username, password FROM users WHERE role = 'root' AND password IS NOT NULL")
+            rows = cursor.fetchall()
+            for row in rows:
+                if not self._is_hashed(row['password']):
+                    hashed = self._hash_password(row['password'])
+                    cursor.execute(
+                        "UPDATE users SET password = %s WHERE username = %s",
+                        (hashed, row['username'])
+                    )
+                    print(f"🔐 Migrated plain-text password for '{row['username']}' to SHA-256.")
+            conn.commit()
+        except Exception as e:
+            print(f"❌ Password migration error: {e}")
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
+
     def ensure_root_exists(self):
         users = self.get_all_users()
         if not any(u['role'] == 'root' for u in users):
             print("⚠ No Root user found. Creating default 'admin'...")
             self.create_user("admin", "admin123", "System Administrator", "root")
+        # Hash any plain-text passwords left over from before this update
+        self._migrate_plain_passwords()
 
     # --- STATION MGMT & GAP LOGIC ---
 
@@ -454,6 +498,8 @@ class DatabaseManager:
     def create_user(self, username, password, full_name, role):
         if role == 'user':
             password = None
+        elif password:  # Hash admin/root passwords before storing
+            password = self._hash_password(password)
 
         new_id = str(uuid.uuid4())
         created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -506,8 +552,11 @@ class DatabaseManager:
         try:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
-            sql = "SELECT * FROM users WHERE username = %s AND BINARY password = %s"
-            cursor.execute(sql, (username, password))
+            # Hash the plain-text password received from the client before
+            # comparing — the database always stores the SHA-256 digest.
+            hashed = self._hash_password(password) if password else ''
+            sql = "SELECT * FROM users WHERE username = %s AND password = %s"
+            cursor.execute(sql, (username, hashed))
             user = cursor.fetchone()
             conn.close()
             if user:
@@ -559,6 +608,10 @@ class DatabaseManager:
 
             if field == 'role' and new_value not in ['root', 'user']:
                 return False, "Role must be either 'root' or 'user'."
+
+            # Hash new passwords before storing
+            if field == 'password' and new_value:
+                new_value = self._hash_password(new_value)
 
             sql = f"UPDATE users SET {field} = %s WHERE username = %s"
             cursor.execute(sql, (new_value, current_username))

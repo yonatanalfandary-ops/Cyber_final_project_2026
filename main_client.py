@@ -17,7 +17,7 @@ from session_guard import SessionGuard
 from smart_lockscreen import SmartLockScreen
 
 # CONFIG
-SERVER_IP = "172.16.63.55" #"10.0.0.24"
+SERVER_IP = "10.0.0.24" #"172.16.63.55"
 SYNC_INTERVAL = 5
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'station_config.json')
 
