@@ -609,9 +609,12 @@ class DatabaseManager:
             if field == 'role' and new_value not in ['root', 'user']:
                 return False, "Role must be either 'root' or 'user'."
 
-            # Hash new passwords before storing
-            if field == 'password' and new_value:
-                new_value = self._hash_password(new_value)
+            # Hash new passwords before storing, or clear to NULL if empty
+            if field == 'password':
+                if new_value:
+                    new_value = self._hash_password(new_value)
+                else:
+                    new_value = None  # Demoted to user — wipe the password
 
             sql = f"UPDATE users SET {field} = %s WHERE username = %s"
             cursor.execute(sql, (new_value, current_username))

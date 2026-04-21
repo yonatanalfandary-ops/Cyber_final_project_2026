@@ -732,7 +732,47 @@ class AdminPanel:
 
         new_val = simpledialog.askstring("Edit", f"Enter new value for {choice}:", parent=self.root)
         if new_val:
-            self.net.send_request("UPDATE_PROFILE", {"username": user['username'], "field": choice, "value": new_val})
+            resp = self.net.send_request("UPDATE_PROFILE", {"username": user['username'], "field": choice, "value": new_val})
+            if not (resp and resp.get("status") == "SUCCESS"):
+                messagebox.showerror("Error", resp.get("message", "Update failed.") if resp else "No server response.", parent=self.root)
+                return
+
+            # ── Role change side-effects ────────────────────────────────
+            if choice == 'role':
+                if new_val.lower() == 'root':
+                    # Promoted to admin — must set a password immediately.
+                    messagebox.showinfo("Password Required",
+                                       f"'{user['username']}' was promoted to admin.\nPlease set a password for them now.",
+                                       parent=self.root)
+                    while True:
+                        new_pass = simpledialog.askstring(
+                            "Set Password",
+                            f"Enter a password for '{user['username']}':",
+                            show='*', parent=self.root
+                        )
+                        if not new_pass:
+                            messagebox.showwarning("Required", "A password is required for admin accounts. Please enter one.", parent=self.root)
+                            continue
+                        confirm_pass = simpledialog.askstring(
+                            "Confirm Password",
+                            "Confirm the password:",
+                            show='*', parent=self.root
+                        )
+                        if new_pass != confirm_pass:
+                            messagebox.showerror("Mismatch", "Passwords do not match. Please try again.", parent=self.root)
+                            continue
+                        self.net.send_request("UPDATE_PROFILE", {
+                            "username": user['username'], "field": "password", "value": new_pass
+                        })
+                        messagebox.showinfo("Done", f"Password set for '{user['username']}'.", parent=self.root)
+                        break
+
+                elif new_val.lower() == 'user':
+                    # Demoted to standard user — wipe the password from the DB.
+                    self.net.send_request("UPDATE_PROFILE", {
+                        "username": user['username'], "field": "password", "value": ""
+                    })
+
             self.fetch_users()
 
     def recapture_face(self):
