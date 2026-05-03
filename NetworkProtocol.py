@@ -23,10 +23,13 @@ class Protocol:
 
     def get_message(self):
         """Reads header, fetches payload chunks, decrypts, and deserializes."""
-        # 1. Read the 4-byte header
-        header = self.sock.recv(4)
-        if not header:
-            return None
+        # 1. Read the 4-byte header (loop until all 4 bytes arrive)
+        header = b""
+        while len(header) < 4:
+            chunk = self.sock.recv(4 - len(header))
+            if not chunk:
+                return None
+            header += chunk
         msg_length = struct.unpack('I', header)[0]
 
         # 2. Read the body in chunks based on the header length

@@ -147,14 +147,11 @@ class MainClient:
     def process_login(self, username):
         """Handles the 4-step login and routing logic."""
         print(f"🔍 Checking database for user: {username}...")
-        response = self.net.send_request("FETCH_ALL_USERS", {})
+        response = self.net.send_request("FETCH_USER", {"username": username})
         target_user = None
 
-        if response and response.get("users"):
-            for u in response['users']:
-                if u['username'].lower() == username.lower():
-                    target_user = u
-                    break
+        if response and response.get("status") == "SUCCESS":
+            target_user = response.get("user")
 
         if not target_user:
             print("❌ Username not found.")

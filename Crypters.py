@@ -14,7 +14,7 @@ class NoCrypter:
         return data
 
 
-class SymetricCrypter(NoCrypter):
+class SymmetricCrypter(NoCrypter):
     def __init__(self, key=None):
         # Fernet is a secure implementation of AES-128 encryption
         if key is None:
@@ -26,14 +26,14 @@ class SymetricCrypter(NoCrypter):
     def get_key(self) -> bytes:
         return self.key
 
-    def encrypt(self, data: bytes) -> bytes: 
+    def encrypt(self, data: bytes) -> bytes:
         return self.fernet.encrypt(data)
 
-    def decrypt(self, data: bytes) -> bytes: 
+    def decrypt(self, data: bytes) -> bytes:
         return self.fernet.decrypt(data)
 
 
-class ASymetricCrypter(NoCrypter):
+class AsymmetricCrypter(NoCrypter):
     def __init__(self, private_key=None, public_key_bytes=None):
         """
         Server will generate the private_key.

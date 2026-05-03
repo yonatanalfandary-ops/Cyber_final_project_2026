@@ -25,6 +25,7 @@ class SessionGuard:
         # Warning State
         self.warning_shown = False
         self.is_paused = False
+        self._is_logging_out = False
 
         # Face Data
         self.known_faces = []
@@ -152,12 +153,9 @@ class SessionGuard:
             self.lbl_time.config(text="TIME: 00:00", fg="#ff4d4d")
             self.root.update()  # Force UI to draw the 00:00 before the popup blocks it
 
-            # --- NEW: The 'Kill Shot' Sync ---
-            # Send a massive deduction to the server right before shutting down.
-            # The server's GREATEST(0, ...) logic will force the database to exactly 0.
-            self.net.send_request("DEDUCT_TIME", {
-                "username": self.user['username'],
-                "seconds": 99999
+            # --- Cleanly zero out the balance on the server ---
+            self.net.send_request("EXPIRE_SESSION", {
+                "username": self.user['username']
             })
 
             self.is_running = False  # Stop background threads
@@ -165,7 +163,7 @@ class SessionGuard:
             return  # Exit function so the 'after' loop doesn't trigger again
 
         # 3. Safe UI Update for active sessions
-        if not getattr(self, '_is_logging_out', False):
+        if not self._is_logging_out:
             # Clamp the math value so it never calculates a negative time
             safe_balance = max(0.0, self.balance_mins)
             mins = int(safe_balance)
@@ -301,7 +299,7 @@ class SessionGuard:
             self._execute_logout(reason)
             return
 
-        if getattr(self, '_is_logging_out', False): return
+        if self._is_logging_out: return
         self._is_logging_out = True
 
         was_paused = self.is_paused

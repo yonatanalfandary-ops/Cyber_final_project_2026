@@ -2,7 +2,7 @@ import socket
 import threading
 from database_manager import DatabaseManager
 from NetworkProtocol import Protocol
-from Crypters import NoCrypter, ASymetricCrypter, SymetricCrypter
+from Crypters import NoCrypter, AsymmetricCrypter, SymmetricCrypter
 
 # Configuration
 SERVER_IP = "0.0.0.0"
@@ -27,7 +27,7 @@ class RentalServer:
 
         try:
             # --- START HANDSHAKE ---
-            asym_crypter = ASymetricCrypter()
+            asym_crypter = AsymmetricCrypter()
             pub_key_bytes = asym_crypter.get_public_key_bytes()
 
             protocol.create_and_send_message({
@@ -44,7 +44,7 @@ class RentalServer:
             encrypted_sym_key = bytes.fromhex(handshake_reply.get("sym_key_hex"))
             sym_key_bytes = asym_crypter.decrypt(encrypted_sym_key)
 
-            protocol.crypter = SymetricCrypter(key=sym_key_bytes)
+            protocol.crypter = SymmetricCrypter(key=sym_key_bytes)
             print(f"🔐 Secure AES Encrypted Connection Established with {addr}")
             # --- END HANDSHAKE ---
 
@@ -262,6 +262,13 @@ class RentalServer:
                     self.db.deduct_user_time(username, seconds)
                     response = {"status": "SUCCESS"}
 
+                # CASE 6b: Expire Session (zero out balance when time runs out)
+                elif action == "EXPIRE_SESSION":
+                    username = request.get("username")
+                    self.db.expire_session(username)
+                    print(f"⏰ Session expired for '{username}'. Balance zeroed.")
+                    response = {"status": "SUCCESS"}
+
                 # CASE 7: Add Rented Time
                 elif action == "ADD_TIME":
                     username = request.get("username")
@@ -301,6 +308,31 @@ class RentalServer:
                             u['connected_station'] = 'None'
 
                     response = {"status": "SUCCESS", "users": users}
+
+                # CASE 8b: Fetch a single user by username (targeted login lookup)
+                elif action == "FETCH_USER":
+                    target_username = request.get("username")
+                    user = self.db.get_user_by_username(target_username)
+
+                    if user:
+                        # Attach live station status, same shape as FETCH_ALL_USERS
+                        stations = self.db.get_all_stations()
+                        active_user_map = {
+                            st['current_user']: st
+                            for st in stations
+                            if st.get('current_user')
+                        }
+                        if user['username'] in active_user_map:
+                            st = active_user_map[user['username']]
+                            user['status'] = st['status']
+                            user['connected_station'] = st['station_id']
+                        else:
+                            user['status'] = 'Offline'
+                            user['connected_station'] = 'None'
+
+                        response = {"status": "SUCCESS", "user": user}
+                    else:
+                        response = {"status": "ERROR", "message": "User not found"}
 
                 # CASE 9: Create User
                 elif action == "CREATE_USER":

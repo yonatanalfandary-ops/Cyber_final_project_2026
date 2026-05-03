@@ -832,6 +832,13 @@ class AdminPanel:
             self.root.attributes('-topmost', True)
 
         if capture_successful:
+            if len(captured_encodings) != 5:
+                messagebox.showerror("Capture Incomplete",
+                                     f"Only {len(captured_encodings)}/5 angles were captured "
+                                     f"(camera read failed on one). Please try again.",
+                                     parent=self.root)
+                return
+
             admin_pass = simpledialog.askstring("Security Check",
                                                 f"Enter password for admin '{self.admin_username}' to authorize:",
                                                 show="*", parent=self.root)

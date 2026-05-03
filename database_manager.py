@@ -546,6 +546,29 @@ class DatabaseManager:
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
+    def get_user_by_username(self, username):
+        """
+        Case-insensitive single-user lookup.
+        Returns a dict with the same fields as get_all_users(), or None if not found.
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(
+                "SELECT username, full_name, role, time_balance, face_encoding "
+                "FROM users WHERE LOWER(username) = LOWER(%s)",
+                (username,)
+            )
+            user = cursor.fetchone()
+            if user and user.get('face_encoding'):
+                user['face_encoding'] = json.loads(user['face_encoding'])
+            return user
+        except Exception as e:
+            print(f"❌ get_user_by_username error: {e}")
+            return None
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
+
     # --- AUTHENTICATION & TIME ---
 
     def authenticate_user_login(self, username, password):
@@ -594,6 +617,23 @@ class DatabaseManager:
             return True
         except Exception as e:
             print(f"❌ Time Deduction Error: {e}")
+            return False
+        finally:
+            if 'conn' in locals() and conn.is_connected(): conn.close()
+
+    def expire_session(self, username):
+        """Sets a user's time_balance to exactly 0 when their session expires."""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET time_balance = 0 WHERE username = %s",
+                (username,)
+            )
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"❌ Expire Session Error: {e}")
             return False
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()

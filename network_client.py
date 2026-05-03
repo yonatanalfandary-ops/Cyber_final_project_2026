@@ -2,7 +2,7 @@ import socket
 import os
 import sys
 from NetworkProtocol import Protocol
-from Crypters import NoCrypter, ASymetricCrypter, SymetricCrypter
+from Crypters import NoCrypter, AsymmetricCrypter, SymmetricCrypter
 
 
 class NetworkClient:
@@ -33,10 +33,10 @@ class NetworkClient:
             pub_key_bytes = bytes.fromhex(msg.get("pub_key_hex"))
 
             # 3. Load Server's Public Key into our Asymmetric Crypter
-            asym_crypter = ASymetricCrypter(public_key_bytes=pub_key_bytes)
+            asym_crypter = AsymmetricCrypter(public_key_bytes=pub_key_bytes)
 
             # 4. Generate our blazing-fast Symmetric Key
-            sym_crypter = SymetricCrypter()
+            sym_crypter = SymmetricCrypter()
             sym_key_bytes = sym_crypter.get_key()
 
             # 5. Encrypt our Symmetric Key using the Server's Public Key
@@ -48,7 +48,7 @@ class NetworkClient:
                 "sym_key_hex": encrypted_sym_key.hex()
             })
 
-            # 7. UPGRADE PROTOCOL: Swap NoCrypter for our new SymetricCrypter!
+            # 7. UPGRADE PROTOCOL: Swap NoCrypter for our new SymmetricCrypter!
             self.protocol.crypter = sym_crypter
             print("🔐 Secure AES Encrypted Connection Established!")
             return True
