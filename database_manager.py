@@ -7,6 +7,16 @@ from datetime import datetime
 
 
 class DatabaseManager:
+    """
+    Encapsulates all MySQL interaction for the rental system. Responsible
+    for schema creation, password hashing/migration, user and station
+    CRUD, audit logging, and the various reporting queries consumed by
+    the admin dashboard.
+
+    A fresh connection is opened for each query and closed in a finally
+    block, so callers do not need to manage connection lifetimes.
+    """
+
     def __init__(self, host="localhost", user="root", password="BatTrot1!", database="rental_system"):
         self.config = {
             "host": host,
@@ -18,10 +28,13 @@ class DatabaseManager:
         self.ensure_root_exists()
 
     def get_connection(self):
+        """Opens a new MySQL connection targeting the rental database."""
         return mysql.connector.connect(database=self.db_name, **self.config)
 
     def init_database(self):
+        """Creates the database and all tables on first run; safe to call repeatedly."""
         try:
+            # Ensure the database itself exists, then connect into it.
             conn = mysql.connector.connect(**self.config)
             cursor = conn.cursor()
             cursor.execute(f"CREATE DATABASE IF NOT EXISTS {self.db_name}")
@@ -30,7 +43,7 @@ class DatabaseManager:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # 1. USERS TABLE
+            # 1. USERS — one row per account (admin or standard).
             cursor.execute('''
                             CREATE TABLE IF NOT EXISTS users (
                                 user_id VARCHAR(36) PRIMARY KEY,
@@ -44,7 +57,7 @@ class DatabaseManager:
                             )
                         ''')
 
-            # 2. STATIONS TABLE
+            # 2. STATIONS — one row per registered client station.
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS stations (
                     station_id VARCHAR(50) PRIMARY KEY,
@@ -56,7 +69,10 @@ class DatabaseManager:
                 )
             ''')
 
-            # Safe Alters in case the table already existed without these columns
+            # Backwards-compatibility migrations: add the active_user and
+            # revenue columns if upgrading from an older schema that
+            # predates them. Errors are swallowed because the columns are
+            # already present in the CREATE TABLE above on fresh installs.
             try:
                 cursor.execute("ALTER TABLE stations ADD COLUMN active_user VARCHAR(50) DEFAULT NULL")
             except:
@@ -66,8 +82,8 @@ class DatabaseManager:
             except:
                 pass
 
-            # 3. USER AUDIT TABLE
-            # Tracks every login ('Joined') and logout ('Left') event per user per station.
+            # 3. USER AUDIT — records every login ('Joined') and logout
+            # ('Left') event for each user on each station.
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS user_audit (
                     log_id INT AUTO_INCREMENT PRIMARY KEY,
@@ -78,8 +94,7 @@ class DatabaseManager:
                 )
             ''')
 
-            # 4. STATION AUDIT TABLE
-            # Tracks every time a station comes Online or goes Offline.
+            # 4. STATION AUDIT — records every Online / Offline transition.
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS station_audit (
                     log_id INT AUTO_INCREMENT PRIMARY KEY,
@@ -89,8 +104,7 @@ class DatabaseManager:
                 )
             ''')
 
-            # 5. SETTINGS TABLE
-            # Stores global server-side configuration as key/value pairs.
+            # 5. SETTINGS — global server-side configuration as key/value pairs.
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS settings (
                     setting_key   VARCHAR(50)  PRIMARY KEY,
@@ -98,7 +112,7 @@ class DatabaseManager:
                 )
             ''')
 
-            # Seed default settings if they don't exist yet
+            # Seed default settings on a fresh install.
             cursor.execute("""
                 INSERT IGNORE INTO settings (setting_key, setting_value)
                 VALUES ('privacy_screen', '0')
@@ -113,12 +127,12 @@ class DatabaseManager:
 
     @staticmethod
     def _hash_password(plain_text):
-        """Returns the SHA-256 hex digest of a plain-text password string."""
+        """Returns the SHA-256 hex digest of a plain-text password."""
         return hashlib.sha256(plain_text.encode('utf-8')).hexdigest()
 
     @staticmethod
     def _is_hashed(value):
-        """Returns True if value already looks like a SHA-256 hex digest (64 hex chars)."""
+        """Returns True if the value already looks like a SHA-256 hex digest (64 hex chars)."""
         if not value or len(value) != 64:
             return False
         try:
@@ -129,9 +143,9 @@ class DatabaseManager:
 
     def _migrate_plain_passwords(self):
         """
-        One-time migration: finds any admin (root) accounts whose password is
-        still stored as plain text and re-hashes them with SHA-256.
-        Safe to call on every startup — already-hashed passwords are skipped.
+        One-time migration that re-hashes any admin (root) account whose
+        password is still stored as plain text. Safe to call on every
+        startup — already-hashed passwords are skipped.
         """
         try:
             conn = self.get_connection()
@@ -153,16 +167,20 @@ class DatabaseManager:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
     def ensure_root_exists(self):
+        """Guarantees that at least one root account exists, then runs the password migration."""
         users = self.get_all_users()
         if not any(u['role'] == 'root' for u in users):
             print("⚠ No Root user found. Creating default 'admin'...")
             self.create_user("admin", "admin123", "System Administrator", "root")
-        # Hash any plain-text passwords left over from before this update
+        # Hash any plain-text passwords still present from before the migration was introduced.
         self._migrate_plain_passwords()
 
-    # --- STATION MGMT & GAP LOGIC ---
+    # ==========================================
+    # STATION MANAGEMENT & GAP-ID LOGIC
+    # ==========================================
 
     def check_station_exists(self, station_id):
+        """Returns True if a station with the given ID is present in the database."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -174,6 +192,7 @@ class DatabaseManager:
             return False
 
     def get_all_station_ids(self):
+        """Returns a list of every station_id present in the database."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -185,7 +204,7 @@ class DatabaseManager:
             return []
 
     def get_all_stations(self):
-        """Fetches all stations and their current state for the Admin Dashboard."""
+        """Returns every station's current state for the admin dashboard."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
@@ -199,7 +218,12 @@ class DatabaseManager:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
     def create_gap_station(self):
-        """Finds the lowest missing STATION_XX integer, creates it, and returns it."""
+        """
+        Allocates a new station ID by finding the lowest unused STATION_XX
+        number, creating that row in the stations table, and returning
+        the new ID. The "gap" logic means that if STATION_03 is deleted,
+        the next new station gets STATION_03 again rather than incrementing.
+        """
         existing_ids = self.get_all_station_ids()
         numbers = []
         for sid in existing_ids:
@@ -209,6 +233,7 @@ class DatabaseManager:
                 except ValueError:
                     pass
 
+        # Walk the sorted list of existing numbers to find the first gap.
         numbers.sort()
         new_num = 1
         for num in numbers:
@@ -232,6 +257,7 @@ class DatabaseManager:
             return None
 
     def update_station_state(self, station_id, status, active_user=None):
+        """Updates a station's status, active user, and last-seen timestamp."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -243,6 +269,7 @@ class DatabaseManager:
             print(f"Station Update Error: {e}")
 
     def add_station_revenue(self, station_id, amount):
+        """Increments the revenue counter on a station."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -253,6 +280,7 @@ class DatabaseManager:
             pass
 
     def delete_station(self, station_id):
+        """Removes a station row from the database (part of the kill-switch flow)."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -269,8 +297,8 @@ class DatabaseManager:
 
     def log_user_action(self, username, station_id, action):
         """
-        Inserts a row into user_audit.
-        action must be 'Joined' or 'Left'.
+        Inserts a row into user_audit. `action` should be either 'Joined'
+        or 'Left'. Silently returns if either identifier is missing.
         """
         if not username or not station_id:
             return
@@ -288,8 +316,8 @@ class DatabaseManager:
 
     def log_station_status(self, station_id, status):
         """
-        Inserts a row into station_audit.
-        status must be 'Online' or 'Offline'.
+        Inserts a row into station_audit. `status` should be either 'Online'
+        or 'Offline'.
         """
         if not station_id:
             return
@@ -306,7 +334,7 @@ class DatabaseManager:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
     def get_user_audit(self, limit=300):
-        """Returns user_audit rows ordered newest-first."""
+        """Returns user_audit rows ordered newest-first, capped at `limit` records."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
@@ -316,7 +344,7 @@ class DatabaseManager:
                 (limit,)
             )
             rows = cursor.fetchall()
-            # Convert datetime objects to strings for JSON serialisation
+            # Convert datetime objects to strings so the rows can be JSON-serialised.
             for r in rows:
                 if isinstance(r.get('timestamp'), datetime):
                     r['timestamp'] = r['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
@@ -328,7 +356,7 @@ class DatabaseManager:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
     def get_station_audit(self, limit=300):
-        """Returns station_audit rows ordered newest-first."""
+        """Returns station_audit rows ordered newest-first, capped at `limit` records."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
@@ -350,9 +378,11 @@ class DatabaseManager:
 
     def get_station_overview(self):
         """
-        Returns each station's total all-time online duration in seconds,
-        calculated by pairing every Online event with its next Offline event
-        in station_audit.  Incomplete pairs (station still online) are skipped.
+        Returns each station's total all-time online duration in seconds.
+
+        Computed by pairing every Online event with the next Offline event
+        for the same station in station_audit. Incomplete pairs (a station
+        that is currently still online) are skipped.
         """
         sql = """
             SELECT
@@ -378,7 +408,7 @@ class DatabaseManager:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(sql)
             rows = cursor.fetchall()
-            # Convert Decimal/int to plain int for JSON serialisation
+            # Cast Decimal/int totals to plain int for JSON serialisation.
             for r in rows:
                 r['total_seconds'] = int(r['total_seconds'])
             return rows
@@ -390,9 +420,11 @@ class DatabaseManager:
 
     def get_user_overview(self):
         """
-        Returns each user's total all-time session duration in seconds,
-        calculated by pairing every Joined event with its next Left event
-        in user_audit.  Incomplete pairs (user still online) are skipped.
+        Returns each user's total all-time session duration in seconds.
+
+        Computed by pairing every Joined event with the next Left event
+        for the same user in user_audit. Incomplete pairs (a user who is
+        still online) are skipped.
         """
         sql = """
             SELECT
@@ -428,7 +460,7 @@ class DatabaseManager:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
     def clear_user_audit(self):
-        """Deletes all rows from user_audit."""
+        """Truncates the user_audit table — irreversible."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -443,7 +475,7 @@ class DatabaseManager:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
     def clear_station_audit(self):
-        """Deletes all rows from station_audit."""
+        """Truncates the station_audit table — irreversible."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -462,7 +494,7 @@ class DatabaseManager:
     # ==========================================
 
     def get_setting(self, key):
-        """Returns the value for a setting key, or None if not found."""
+        """Returns the value for a setting key, or None if it doesn't exist."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
@@ -476,7 +508,7 @@ class DatabaseManager:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
     def set_setting(self, key, value):
-        """Inserts or updates a setting key/value pair."""
+        """Inserts or updates a setting key/value pair (UPSERT)."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -493,12 +525,17 @@ class DatabaseManager:
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
-    # --- USER MANAGEMENT ---
+    # ==========================================
+    # USER MANAGEMENT
+    # ==========================================
 
     def create_user(self, username, password, full_name, role):
+        """Creates a new user. Standard users have no password; admin passwords are hashed."""
         if role == 'user':
+            # Standard users authenticate via Face ID only; they never have a stored password.
             password = None
-        elif password:  # Hash admin/root passwords before storing
+        elif password:
+            # Hash admin passwords before persisting.
             password = self._hash_password(password)
 
         new_id = str(uuid.uuid4())
@@ -512,6 +549,7 @@ class DatabaseManager:
             conn.commit()
             return True, "User created"
         except mysql.connector.Error as err:
+            # Translate the standard duplicate-key error into a friendly message.
             if err.errno == errorcode.ER_DUP_ENTRY:
                 return False, "Username already exists!"
             return False, str(err)
@@ -519,6 +557,7 @@ class DatabaseManager:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
     def delete_user(self, username):
+        """Permanently removes a user from the database."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -531,11 +570,13 @@ class DatabaseManager:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
     def get_all_users(self):
+        """Returns every user along with their face encodings (parsed back from JSON)."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
             cursor.execute("SELECT username, full_name, role, time_balance, face_encoding FROM users")
             users = cursor.fetchall()
+            # Parse the stored JSON face encoding back into a Python list.
             for u in users:
                 if u.get('face_encoding'):
                     u['face_encoding'] = json.loads(u['face_encoding'])
@@ -548,8 +589,8 @@ class DatabaseManager:
 
     def get_user_by_username(self, username):
         """
-        Case-insensitive single-user lookup.
-        Returns a dict with the same fields as get_all_users(), or None if not found.
+        Case-insensitive single-user lookup. Returns a dict with the same
+        shape as get_all_users(), or None if no matching user exists.
         """
         try:
             conn = self.get_connection()
@@ -569,14 +610,17 @@ class DatabaseManager:
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
-    # --- AUTHENTICATION & TIME ---
+    # ==========================================
+    # AUTHENTICATION & TIME
+    # ==========================================
 
     def authenticate_user_login(self, username, password):
+        """Looks up a user by username and password. The plain-text password is hashed before comparison."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
-            # Hash the plain-text password received from the client before
-            # comparing — the database always stores the SHA-256 digest.
+            # Hash the supplied plain-text password before comparing — the
+            # database always stores the SHA-256 digest, never the raw password.
             hashed = self._hash_password(password) if password else ''
             sql = "SELECT * FROM users WHERE username = %s AND password = %s"
             cursor.execute(sql, (username, hashed))
@@ -592,6 +636,7 @@ class DatabaseManager:
             return None
 
     def add_time(self, username, minutes):
+        """Adds `minutes` to a user's balance. Negative values are accepted but clamped at zero."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -606,7 +651,7 @@ class DatabaseManager:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
     def deduct_user_time(self, username, seconds_used):
-        """Deducts time based on seconds used."""
+        """Deducts the supplied number of seconds (converted to minutes) from a user's balance."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -622,7 +667,7 @@ class DatabaseManager:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
     def expire_session(self, username):
-        """Sets a user's time_balance to exactly 0 when their session expires."""
+        """Forces a user's balance to exactly zero when their session expires."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -639,27 +684,35 @@ class DatabaseManager:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
     def update_user_field(self, current_username, field, new_value):
+        """
+        Updates a single field on a user record. Only a whitelisted set of
+        fields are permitted, and the role field has restricted values.
+        Passwords are hashed (or cleared) before being persisted.
+        """
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
 
+            # Whitelist allowed fields to prevent SQL injection via the field name.
             if field not in ['full_name', 'password', 'username', 'role']:
                 return False, "Invalid field"
 
             if field == 'role' and new_value not in ['root', 'user']:
                 return False, "Role must be either 'root' or 'user'."
 
-            # Hash new passwords before storing, or clear to NULL if empty
+            # Hash new passwords; clear to NULL when the password is being removed.
             if field == 'password':
                 if new_value:
                     new_value = self._hash_password(new_value)
                 else:
-                    new_value = None  # Demoted to user — wipe the password
+                    new_value = None  # Demoted to standard user — strip the password.
 
             sql = f"UPDATE users SET {field} = %s WHERE username = %s"
             cursor.execute(sql, (new_value, current_username))
             rows_affected = cursor.rowcount
 
+            # When promoting a user to root, also zero out their rented
+            # time balance — admins do not consume the time pool.
             if field == 'role' and new_value == 'root':
                 zero_sql = "UPDATE users SET time_balance = 0 WHERE username = %s"
                 cursor.execute(zero_sql, (current_username,))
@@ -677,6 +730,7 @@ class DatabaseManager:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
     def update_user_face(self, username, face_data):
+        """Persists a new set of face encodings (as JSON) against the user."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -691,7 +745,7 @@ class DatabaseManager:
             return False
 
     def get_active_renters(self):
-        """Returns users with balance > 0 and face data."""
+        """Returns every user that has a positive balance and at least one face encoding on file."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
@@ -708,9 +762,12 @@ class DatabaseManager:
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
-    # --- STATION MGMT ---
+    # ==========================================
+    # STATION REGISTRATION
+    # ==========================================
 
     def register_station(self, station_id, station_name):
+        """Inserts a new station row with default offline status."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -723,6 +780,7 @@ class DatabaseManager:
             return False
 
     def activate_station(self, station_id):
+        """Marks a station as active and updates its last_seen timestamp."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()

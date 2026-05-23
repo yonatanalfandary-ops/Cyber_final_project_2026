@@ -5,37 +5,46 @@ import face_recognition
 
 
 class SettingsWindow:
-    # 1. Added 'role' parameter (Defaults to "user")
+    """
+    Fullscreen account-settings window. The set of available actions
+    depends on the user's role: admins ('root') can change their password,
+    standard users cannot. All users can update their full name, username,
+    and face encoding.
+    """
+
     def __init__(self, network_client, username, parent_root, role="user", from_payment=False):
         self.net = network_client
         self.username = username
         self.parent_root = parent_root
-        self.role = role  # Store the role
+        self.role = role
         self.from_payment = from_payment
         self.root = None
         self.new_username = None
 
     def show(self):
+        """Displays the window and blocks until it is closed. Returns the
+        (possibly updated) username so the caller can refresh its state."""
         self.root = tk.Toplevel(self.parent_root)
 
-        # --- KIOSK MODE ---
+        # Kiosk-mode window.
         self.root.attributes('-fullscreen', True)
         self.root.attributes('-topmost', True)
         self.root.configure(bg="#34495e")
 
-        # Center Frame
+        # Centered content frame.
         frame = tk.Frame(self.root, bg="#34495e")
         frame.place(relx=0.5, rely=0.5, anchor="center")
 
         tk.Label(frame, text="Account Settings", font=("Arial", 28, "bold"),
                  bg="#34495e", fg="white").pack(pady=30)
 
-        # Buttons
+        # Common styling shared by every standard action button.
         btn_style = {"font": ("Arial", 16), "width": 25, "bg": "#2980b9", "fg": "white"}
 
         tk.Button(frame, text="Change Full Name", command=self.change_name, **btn_style).pack(pady=10)
 
-        # --- THE FIX: Only show 'Change Password' if they are root ---
+        # The password option is only meaningful for admin accounts; standard
+        # users authenticate via Face ID and have no stored password.
         if self.role == 'root':
             tk.Button(frame, text="Change Password", command=self.change_password, **btn_style).pack(pady=10)
 
@@ -47,9 +56,10 @@ class SettingsWindow:
         tk.Button(frame, text="Recapture Face ID", command=self.recapture_face,
                   font=("Arial", 16, "bold"), width=25, bg="#e67e22", fg="white").pack(pady=10)
 
-        # --- DYNAMIC EXIT BUTTON ---
+        # The label on the exit button changes depending on where the user
+        # came from, so the navigation feels consistent.
         exit_text = "Back to Payment" if self.from_payment else "Close Settings"
-        exit_color = "#c0392b"  # Red
+        exit_color = "#c0392b"
 
         tk.Button(frame, text=exit_text, command=self.close,
                   font=("Arial", 14), width=15, bg=exit_color, fg="white").pack(pady=30)
@@ -58,6 +68,7 @@ class SettingsWindow:
         return self.new_username if self.new_username else self.username
 
     def send_update(self, field, value):
+        """Generic helper that sends an UPDATE_PROFILE request for one field."""
         print(f"📝 Updating {field}...")
         response = self.net.send_request("UPDATE_PROFILE", {
             "username": self.username,
@@ -67,6 +78,7 @@ class SettingsWindow:
         return response.get("status") == "SUCCESS"
 
     def change_name(self):
+        """Prompts the user for a new full name and submits the update."""
         new_name = simpledialog.askstring("Update Name", "Enter new Full Name:", parent=self.root)
         if new_name:
             if self.send_update("full_name", new_name):
@@ -75,15 +87,16 @@ class SettingsWindow:
                 messagebox.showerror("Error", "Failed to update.", parent=self.root)
 
     def change_password(self):
+        """Prompts the admin for a new password and submits the update."""
         new_pass = simpledialog.askstring("Update Password", "Enter new Password:", parent=self.root, show="*")
         if new_pass:
-            # CHANGED: "password_hash" -> "password"
             if self.send_update("password", new_pass):
                 messagebox.showinfo("Success", "Password updated.", parent=self.root)
             else:
                 messagebox.showerror("Error", "Failed to update.", parent=self.root)
 
     def change_username(self):
+        """Prompts for a new username, confirms the change, and submits the update."""
         new_user = simpledialog.askstring("Update Username", "Enter new Username:", parent=self.root)
         if new_user:
             confirm = messagebox.askyesno("Confirm", "Are you sure?",
@@ -98,6 +111,11 @@ class SettingsWindow:
                 messagebox.showerror("Error", "Username taken or invalid.", parent=self.root)
 
     def recapture_face(self):
+        """
+        Walks the user through capturing five face encodings (one per
+        angle) and submits them to the server. The current settings window
+        is hidden during capture so the OpenCV window has clean focus.
+        """
         confirm = messagebox.askyesno("Recapture Face",
                                       "This will open the camera.\nLook: Center, Left, Right, Up, Down.\nReady?",
                                       parent=self.root)
@@ -105,7 +123,8 @@ class SettingsWindow:
 
         self.root.withdraw()
 
-        # FIX 1: Use DirectShow to prevent MSMF hardware conflict crashes
+        # Use DirectShow on Windows — the default MSMF backend can fail to
+        # release the camera and cause a hard crash on the next capture.
         cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 
         angles = ["Center", "Left", "Right", "Up", "Down"]
@@ -121,19 +140,20 @@ class SettingsWindow:
                     cv2.putText(frame, f"Look {angle} - Press SPACE", (50, 50),
                                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-                    # --- NEW: Cancel Instruction ---
+                    # On-screen cancel instruction so the user always has an exit.
                     cv2.putText(frame, "Press ESC to cancel", (50, 90),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
                     cv2.imshow("Face Capture", frame)
 
-                    # FIX 2: Check if the 'X' button was clicked
+                    # Detect the OpenCV window being closed via its 'X' button
+                    # so the loop terminates cleanly instead of hanging.
                     if cv2.getWindowProperty("Face Capture", cv2.WND_PROP_VISIBLE) < 1:
                         print("Capture cancelled via 'X' button.")
-                        return  # Hits finally block automatically
+                        return  # Cleanup runs in the finally block.
 
                     key = cv2.waitKey(1)
-                    if key == 32:  # Space
+                    if key == 32:  # SPACE — accept the current frame.
                         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         boxes = face_recognition.face_locations(rgb)
                         if boxes:
@@ -141,15 +161,18 @@ class SettingsWindow:
                             if encs:
                                 captured_encodings.append(encs[0].tolist())
                                 captured = True
+                                # Briefly flash a green border to confirm capture.
                                 cv2.rectangle(frame, (0, 0), (frame.shape[1], frame.shape[0]), (0, 255, 0), 20)
                                 cv2.imshow("Face Capture", frame)
                                 cv2.waitKey(500)
-                    if key == 27:  # ESC
+                    if key == 27:  # ESC — abort capture.
                         print("Capture cancelled via ESC.")
-                        return  # Hits finally block automatically
+                        return  # Cleanup runs in the finally block.
 
             if len(captured_encodings) == 5:
-                # No password needed since they are already authenticated and logged in!
+                # An empty password is sent because the user is already
+                # authenticated; the server allows self-updates without
+                # re-prompting for a password in that case.
                 response = self.net.send_request("UPDATE_FACE", {
                     "username": self.username,
                     "password": "",
@@ -166,4 +189,5 @@ class SettingsWindow:
             self.root.attributes('-topmost', True)
 
     def close(self):
+        """Closes the settings window."""
         self.root.destroy()

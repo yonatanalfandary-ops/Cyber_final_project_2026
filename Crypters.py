@@ -4,19 +4,31 @@ from cryptography.hazmat.primitives import hashes, serialization
 
 
 class NoCrypter:
+    """
+    Pass-through crypter used before the encryption handshake completes.
+    Returns the data unmodified for both encrypt and decrypt operations.
+    """
+
     def __init__(self):
         pass
 
-    def encrypt(self, data: bytes) -> bytes: 
+    def encrypt(self, data: bytes) -> bytes:
         return data
 
-    def decrypt(self, data: bytes) -> bytes: 
+    def decrypt(self, data: bytes) -> bytes:
         return data
 
 
 class SymmetricCrypter(NoCrypter):
+    """
+    Symmetric encryption wrapper backed by Fernet (AES-128 in CBC mode with
+    HMAC authentication). Used for all post-handshake traffic on both the
+    client and server sides.
+    """
+
     def __init__(self, key=None):
-        # Fernet is a secure implementation of AES-128 encryption
+        # Generate a fresh key if none is provided; otherwise reuse the
+        # supplied key (the server reuses the key received from the client).
         if key is None:
             self.key = Fernet.generate_key()
         else:
@@ -24,6 +36,7 @@ class SymmetricCrypter(NoCrypter):
         self.fernet = Fernet(self.key)
 
     def get_key(self) -> bytes:
+        """Returns the raw symmetric key bytes."""
         return self.key
 
     def encrypt(self, data: bytes) -> bytes:
@@ -34,15 +47,20 @@ class SymmetricCrypter(NoCrypter):
 
 
 class AsymmetricCrypter(NoCrypter):
+    """
+    RSA-2048 asymmetric crypter used only during the initial handshake to
+    securely transport the symmetric session key from client to server.
+
+    The server instantiates this class with no arguments to generate a new
+    key pair; the client instantiates it with the server's public key bytes
+    so it can encrypt its symmetric key for transit.
+    """
+
     def __init__(self, private_key=None, public_key_bytes=None):
-        """
-        Server will generate the private_key.
-        Client will initialize this by passing the server's public_key_bytes.
-        """
         self.private_key = private_key
         self.public_key = None
 
-        # 1. Server Mode: Generate brand new keys
+        # Server mode: generate a fresh RSA key pair.
         if private_key is None and public_key_bytes is None:
             self.private_key = rsa.generate_private_key(
                 public_exponent=65537,
@@ -50,12 +68,16 @@ class AsymmetricCrypter(NoCrypter):
             )
             self.public_key = self.private_key.public_key()
 
-        # 2. Client Mode: Load the Server's public key
+        # Client mode: load the server's public key from the bytes received
+        # during the handshake.
         elif public_key_bytes is not None:
             self.public_key = serialization.load_pem_public_key(public_key_bytes)
 
     def get_public_key_bytes(self) -> bytes:
-        """Exports the public key so it can be sent over the network."""
+        """
+        Serialises the public key into PEM-encoded bytes so it can be
+        transmitted to the client over the network.
+        """
         if not self.public_key:
             return b""
         return self.public_key.public_bytes(
@@ -63,8 +85,12 @@ class AsymmetricCrypter(NoCrypter):
             format=serialization.PublicFormat.SubjectPublicKeyInfo
         )
 
-    def encrypt(self, data: bytes) -> bytes: 
-        """Uses the PUBLIC key to lock data. (Client uses this on the Symmetric Key)"""
+    def encrypt(self, data: bytes) -> bytes:
+        """
+        Encrypts data with the public key using OAEP padding.
+        Called by the client to wrap the symmetric session key before
+        sending it to the server.
+        """
         if not self.public_key:
             raise ValueError("Public key not loaded!")
 
@@ -77,8 +103,12 @@ class AsymmetricCrypter(NoCrypter):
             )
         )
 
-    def decrypt(self, data: bytes) -> bytes: 
-        """Uses the PRIVATE key to unlock data. (Server uses this to read the Symmetric Key)"""
+    def decrypt(self, data: bytes) -> bytes:
+        """
+        Decrypts data with the private key using OAEP padding.
+        Only the server holds the private key, so only the server can
+        recover the symmetric session key from the handshake payload.
+        """
         if not self.private_key:
             raise ValueError("Private key not loaded! Clients cannot decrypt asymmetric data.")
 

@@ -6,6 +6,12 @@ from Crypters import NoCrypter, AsymmetricCrypter, SymmetricCrypter
 
 
 class NetworkClient:
+    """
+    TCP client wrapper that handles the secure handshake with the server
+    and exposes a simple request/response interface for the rest of the
+    client application.
+    """
+
     def __init__(self, server_ip="10.0.0.24", server_port=5000):
         self.server_ip = server_ip
         self.server_port = server_port
@@ -13,42 +19,48 @@ class NetworkClient:
         self.protocol = None
 
     def connect(self):
-        """Establishes connection and performs Hybrid Encryption Handshake."""
+        """
+        Establishes a TCP connection and performs the hybrid encryption
+        handshake. The server sends its RSA public key, the client generates
+        a symmetric (Fernet) session key and returns it encrypted with that
+        public key, and from that point on all traffic is symmetrically
+        encrypted.
+        """
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.connect((self.server_ip, self.server_port))
             print(f"✅ Connected to Server at {self.server_ip}:{self.server_port}")
 
-            # --- START HANDSHAKE ---
-            # 1. Start with plaintext to receive the Server's Public Key
+            # Begin handshake in plaintext mode so the public key can be received.
             self.protocol = Protocol(self.sock, NoCrypter())
 
-            # 2. Wait for Server to send its Public Key
+            # Step 1: wait for the server to send its RSA public key.
             msg = self.protocol.get_message()
             if not msg or msg.get("action") != "HANDSHAKE_PUB_KEY":
                 print("❌ Encryption Handshake failed: Did not receive Public Key.")
                 return False
 
-            # Convert the hex string back into raw bytes
+            # The key is transmitted as a hex string; convert it back to raw bytes.
             pub_key_bytes = bytes.fromhex(msg.get("pub_key_hex"))
 
-            # 3. Load Server's Public Key into our Asymmetric Crypter
+            # Step 2: load the server's public key into an AsymmetricCrypter.
             asym_crypter = AsymmetricCrypter(public_key_bytes=pub_key_bytes)
 
-            # 4. Generate our blazing-fast Symmetric Key
+            # Step 3: generate a fresh symmetric session key.
             sym_crypter = SymmetricCrypter()
             sym_key_bytes = sym_crypter.get_key()
 
-            # 5. Encrypt our Symmetric Key using the Server's Public Key
+            # Step 4: wrap the symmetric key with the server's public key.
             encrypted_sym_key = asym_crypter.encrypt(sym_key_bytes)
 
-            # 6. Send the encrypted Symmetric Key back to the Server (as a hex string)
+            # Step 5: send the wrapped symmetric key back to the server.
             self.protocol.create_and_send_message({
                 "action": "HANDSHAKE_SYM_KEY",
                 "sym_key_hex": encrypted_sym_key.hex()
             })
 
-            # 7. UPGRADE PROTOCOL: Swap NoCrypter for our new SymmetricCrypter!
+            # Step 6: swap the crypter on the protocol to the symmetric one so
+            # all subsequent messages are sent over the secure channel.
             self.protocol.crypter = sym_crypter
             print("🔐 Secure AES Encrypted Connection Established!")
             return True
@@ -58,17 +70,24 @@ class NetworkClient:
             return False
 
     def send_request(self, action, data=None):
+        """
+        Sends a request to the server and returns the parsed response, or
+        None if the connection has failed. Also intercepts the kill-switch
+        command and terminates the client immediately if it is received.
+        """
         if not self.protocol:
             return None
 
         req = {"action": action}
-        if data: req.update(data)
+        if data:
+            req.update(data)
 
         try:
             self.protocol.create_and_send_message(req)
             response = self.protocol.get_message()
 
-            # --- THE KILL SWITCH INTERCEPT ---
+            # Kill-switch intercept: if the server tells us to unregister, wipe
+            # the local station configuration and terminate the process.
             if response and response.get("action") == "COMMAND_UNREGISTER":
                 print("💀 KILL SWITCH RECEIVED. Remote wipe triggered.")
                 config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'station_config.json')
@@ -77,7 +96,7 @@ class NetworkClient:
                         os.remove(config_path)
                     except:
                         pass
-                sys.exit(0)  # Terminate entirely
+                sys.exit(0)
 
             return response
 
@@ -86,4 +105,6 @@ class NetworkClient:
             return None
 
     def close(self):
-        if self.sock: self.sock.close()
+        """Closes the underlying socket if one is open."""
+        if self.sock:
+            self.sock.close()

@@ -10,63 +10,76 @@ from rent_window import RentWindow
 
 
 class SessionGuard:
+    """
+    Runs an active user session. Owns the on-screen HUD, the background
+    face-presence monitor, time-balance deduction, and the logout flow.
+
+    The HUD runs on the main thread inside its own Tk root; the camera
+    presence check runs on a daemon thread and signals the main thread by
+    setting state flags and using root.after(0, ...) for any UI changes.
+    """
+
     def __init__(self, network_client, user_data):
         self.net = network_client
         self.user = user_data
         self.is_running = True
-        self.exit_status = "LOGOUT"  # Defaults to full logout unless paused
+        self.exit_status = "LOGOUT"  # Default exit reason if nothing else is set.
 
-        # Session State
+        # Session state
         self.is_admin = (self.user.get('role') == 'root')
         self.balance_mins = float(self.user.get('time_balance', 0))
         self.grace_start = None
         self.last_sync = time.time()
 
-        # Warning State
+        # Warning / pause state flags
         self.warning_shown = False
         self.is_paused = False
         self._is_logging_out = False
 
-        # Face Data
+        # Pre-load this user's stored face encodings.
         self.known_faces = []
         if self.user.get('face_encoding'):
             self.known_faces = [np.array(e) for e in self.user['face_encoding']]
 
-        # UI Components
+        # UI handles
         self.root = None
         self.lbl_time = None
 
+        # Cancellable timer IDs
         self._hud_timer = None
         self._countdown_timer = None
 
     def start(self):
-        """Starts the background monitor and the Mini-HUD."""
+        """Starts the background monitor and the HUD. Blocks until the session ends."""
         print(f"--- SESSION STARTED: {self.user['username']} ---")
 
-        # 1. Start the Background Camera Thread (Store it as self.camera_thread)
+        # Launch the camera-monitor thread.
         self.camera_thread = Thread(target=self._background_monitor, daemon=True)
         self.camera_thread.start()
 
-        # 2. Start the Mini-Toolbar UI (Main Thread)
+        # Build and run the HUD on the main thread.
         self._create_hud()
 
-        # Cleanup when HUD closes
+        # The HUD has now closed; signal the monitor to stop.
         self.is_running = False
 
-        # --- THE FIX: Wait for the background thread to actually die ---
+        # Wait for the camera thread to actually finish so that cap.release()
+        # has time to run before the next session opens the camera again.
         if hasattr(self, 'camera_thread') and self.camera_thread.is_alive():
-            self.camera_thread.join(timeout=2.0) # Give it up to 2 seconds to run cap.release()
+            self.camera_thread.join(timeout=2.0)
 
-        # Save exact balance back to the user dictionary for when they resume!
+        # Persist the exact remaining balance back to the user dict so a
+        # resume from pause picks up where the session left off.
         self.user['time_balance'] = self.balance_mins
 
         return self.exit_status
 
     def _create_hud(self):
+        """Builds the small always-on-top HUD window and starts its update loop."""
         self.root = tk.Tk()
         self.root.title("Session Guard")
 
-        # UI Styling: Bottom Right Position
+        # Anchor the HUD to the bottom-right of the screen by default.
         width, height = 250, 90
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
@@ -76,7 +89,7 @@ class SessionGuard:
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#1e1e1e")
 
-        # --- DRAGGABILITY LOGIC ---
+        # --- Drag-to-reposition handlers ---
         self._offset_x = 0
         self._offset_y = 0
 
@@ -93,6 +106,7 @@ class SessionGuard:
             wh = self.root.winfo_height()
             snap_margin = 25
 
+            # Snap the HUD to the screen edge when dragged close enough.
             if new_x < snap_margin:
                 new_x = 0
             elif new_x > sw - ww - snap_margin:
@@ -106,20 +120,20 @@ class SessionGuard:
 
         self.root.bind("<Button-1>", _start_drag)
         self.root.bind("<B1-Motion>", _do_drag)
-        # ---------------------------
 
-        # Time Label
+        # Time-remaining display
         self.lbl_time = tk.Label(self.root, text="TIME: 00:00", font=("Arial", 14, "bold"),
                                  bg="#1e1e1e", fg="#00ff00")
         self.lbl_time.pack(pady=5)
 
+        # The label is also a drag handle so the user has a generous grab area.
         self.lbl_time.bind("<Button-1>", _start_drag)
         self.lbl_time.bind("<B1-Motion>", _do_drag)
 
         tk.Label(self.root, text="⋮⋮ DRAG TO REPOSITION ⋮⋮", font=("Arial", 7),
                  bg="#1e1e1e", fg="#444444").pack()
 
-        # Buttons
+        # Action buttons
         btn_frame = tk.Frame(self.root, bg="#1e1e1e")
         btn_frame.pack(pady=5)
 
@@ -129,6 +143,7 @@ class SessionGuard:
         tk.Button(btn_frame, text="Logout [Q]", command=self._logout,
                   bg="#c0392b", fg="white", font=("Arial", 9)).pack(side="left", padx=5)
 
+        # Keyboard shortcuts: Q to log out, S to open settings.
         self.root.bind('q', lambda e: self._logout())
         self.root.bind('s', lambda e: self._open_settings())
 
@@ -136,9 +151,12 @@ class SessionGuard:
         self.root.mainloop()
 
     def _update_hud_loop(self):
+        """Once-per-second tick: deducts time, syncs with the server, updates the display."""
         if not self.is_running: return
 
-        # 1. Deduct Time
+        # Deduct one second's worth of balance for non-admin users while the
+        # session is active. Sync the cumulative deduction to the server
+        # every five seconds rather than every tick to limit network chatter.
         if not self.is_paused and not self.is_admin:
             self.balance_mins -= (1 / 60)
             if time.time() - self.last_sync >= 5:
@@ -148,29 +166,31 @@ class SessionGuard:
                 })
                 self.last_sync = time.time()
 
-        # 2. THE FIX: Catch the timeout immediately, force 00:00, and halt the loop
+        # Handle balance exhaustion: force the display to 00:00, zero out the
+        # balance on the server, and trigger a logout. The update() call
+        # ensures the 00:00 is rendered before the messagebox blocks the loop.
         if self.balance_mins <= 0 and not self.is_admin:
             self.lbl_time.config(text="TIME: 00:00", fg="#ff4d4d")
-            self.root.update()  # Force UI to draw the 00:00 before the popup blocks it
+            self.root.update()
 
-            # --- Cleanly zero out the balance on the server ---
             self.net.send_request("EXPIRE_SESSION", {
                 "username": self.user['username']
             })
 
-            self.is_running = False  # Stop background threads
+            self.is_running = False
             self._logout("Time Expired!")
-            return  # Exit function so the 'after' loop doesn't trigger again
+            return  # Don't schedule another tick after a forced logout.
 
-        # 3. Safe UI Update for active sessions
+        # Normal UI update path.
         if not self._is_logging_out:
-            # Clamp the math value so it never calculates a negative time
+            # Clamp the balance so brief overshoots can't display negative time.
             safe_balance = max(0.0, self.balance_mins)
             mins = int(safe_balance)
             secs = int((safe_balance * 60) % 60)
             self.lbl_time.config(text=f"TIME: {mins:02d}:{secs:02d}")
 
-            # Low Time Warning Check
+            # Low-time warning: switch the display to red and surface the
+            # rent prompt once when less than a minute remains.
             if safe_balance <= 1.0:
                 self.lbl_time.config(fg="#ff4d4d")
                 if not self.warning_shown and not self.is_paused and not self.is_admin:
@@ -179,13 +199,19 @@ class SessionGuard:
                 self.lbl_time.config(fg="#00ff00")
                 self.warning_shown = False
 
-        # 4. Schedule next tick
+        # Schedule the next tick.
         self._hud_timer = self.root.after(1000, self._update_hud_loop)
 
     def _background_monitor(self):
-        cap = None  # Start with no camera
+        """
+        Daemon thread that watches the webcam for the active user's face.
+        If the face is missing for more than three seconds, the session is
+        switched to the Paused state.
+        """
+        cap = None  # Lazily acquired so we don't hold the camera while paused.
         while self.is_running:
-            # --- THE FIX: Release the camera if paused or admin ---
+            # While paused or for admin sessions, release the camera so other
+            # parts of the app (Settings, RentWindow recapture) can use it.
             if self.is_paused or self.is_admin:
                 if cap is not None:
                     cap.release()
@@ -193,9 +219,9 @@ class SessionGuard:
                 time.sleep(0.5)
                 continue
 
-            # --- Re-acquire the camera if we are active ---
+            # Re-acquire the camera if we don't already hold it.
             if cap is None:
-                cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # Use DSHOW here too!
+                cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 
             ret, frame = cap.read()
             if not ret: continue
@@ -214,8 +240,12 @@ class SessionGuard:
                     break
 
             if found:
+                # User present — reset the grace timer.
                 self.grace_start = None
             else:
+                # Start (or continue) the grace period. After three seconds
+                # of continuous absence, transition to the Paused state and
+                # tear down the HUD on the main thread.
                 if self.grace_start is None:
                     self.grace_start = time.time()
 
@@ -232,7 +262,7 @@ class SessionGuard:
             cap.release()
 
     def _fetch_privacy_setting(self):
-        """Returns True if the privacy screen is enabled on the server."""
+        """Returns True if the privacy-screen option is enabled on the server."""
         try:
             response = self.net.send_request("GET_SETTING", {"key": "privacy_screen"})
             if response and response.get("status") == "SUCCESS":
@@ -242,18 +272,20 @@ class SessionGuard:
         return False
 
     def _check_low_time(self):
+        """Surfaces the low-time prompt and offers an inline rent flow."""
         self.warning_shown = True
         self.is_paused = True
 
-        # If privacy screen is on, place a fullscreen black overlay behind
-        # the dialog and rent window so the desktop isn't exposed.
+        # If privacy mode is on, place a fullscreen black overlay behind the
+        # dialog and rent window so the desktop is never exposed during the
+        # interaction.
         overlay = None
         if self._fetch_privacy_setting():
             overlay = tk.Toplevel(self.root)
             overlay.attributes('-fullscreen', True)
             overlay.attributes('-topmost', True)
             overlay.configure(bg='black')
-            overlay.update()  # Force draw before the dialog opens on top
+            overlay.update()  # Force a paint before the dialog opens on top.
 
         dialog_parent = overlay if overlay else self.root
         ans = messagebox.askyesno("Low Time", "Less than 1 minute left! Add time?", parent=dialog_parent)
@@ -271,6 +303,7 @@ class SessionGuard:
         print("▶ Session Resumed")
 
     def _sync_balance_from_server(self):
+        """Pulls the user's current balance from the server after a rent transaction."""
         response = self.net.send_request("FETCH_ACTIVE_USERS")
         if response and response.get("status") == "SUCCESS":
             for u in response.get("users", []):
@@ -280,21 +313,30 @@ class SessionGuard:
                     break
 
     def _open_settings(self, event=None):
+        """Pauses the session, then opens the settings window after a short delay."""
         self.is_paused = True
         self.root.attributes("-topmost", False)
 
-        # THE FIX: Wait 600ms for the background thread to see it is paused
-        # and release the camera, THEN open the settings window.
+        # Wait for the camera-monitor thread to observe the paused state
+        # and release the webcam before opening Settings (which needs the
+        # camera for the face recapture flow).
         self.root.after(600, self._show_settings_window)
 
     def _show_settings_window(self):
-        # Also pass the user role here so the "Change Password" button shows up correctly for root!
+        """Opens the settings window with the user's current role."""
+        # Forward the role so the "Change Password" button is shown only
+        # to admin accounts.
         settings = SettingsWindow(self.net, self.user['username'], self.root, role=self.user.get('role', 'user'))
         settings.show()
         self.is_paused = False
         self.root.attributes("-topmost", True)
 
     def _logout(self, reason=None, event=None):
+        """
+        Logout dispatcher. A non-None `reason` indicates an automatic logout
+        (e.g. time expired) and skips the confirmation dialog. Otherwise
+        the user is asked to confirm they have closed their applications.
+        """
         if reason:
             self._execute_logout(reason)
             return
@@ -311,18 +353,23 @@ class SessionGuard:
         elapsed_seconds = time.time() - start_time
 
         if ans is True:
+            # Confirmed — log the user out immediately.
             self._execute_logout()
         elif ans is False:
+            # User needs time to close apps — deduct the time they spent on
+            # the dialog and start a 10-second force-logout countdown.
             self._deduct_popup_time(elapsed_seconds)
             self.root.attributes("-topmost", True)
             self._start_force_logout_countdown(10)
         else:
+            # Cancelled — restore the previous paused state and resume.
             self._deduct_popup_time(elapsed_seconds)
             self._is_logging_out = False
             self.is_paused = was_paused
             self.root.attributes("-topmost", True)
 
     def _deduct_popup_time(self, elapsed_seconds):
+        """Deducts time spent looking at the logout dialog from the user's balance."""
         if self.is_admin: return
         self.balance_mins -= (elapsed_seconds / 60)
         self.net.send_request("DEDUCT_TIME", {
@@ -331,6 +378,7 @@ class SessionGuard:
         })
 
     def _start_force_logout_countdown(self, seconds_left):
+        """Recursive countdown that forces a logout when it reaches zero."""
         if seconds_left <= 0:
             self._execute_logout()
             return
@@ -338,7 +386,11 @@ class SessionGuard:
         self._countdown_timer = self.root.after(1000, lambda: self._start_force_logout_countdown(seconds_left - 1))
 
     def _safe_pause_cleanup(self):
-        """Executes strictly in the MAIN thread to safely stop Tkinter timers and UI."""
+        """
+        Runs on the main thread to safely tear down the HUD when the
+        background monitor signals a pause. Cancels pending timers before
+        destroying the window so Tk doesn't try to fire them on a dead root.
+        """
         if hasattr(self, '_hud_timer') and self._hud_timer:
             self.root.after_cancel(self._hud_timer)
         if hasattr(self, '_countdown_timer') and self._countdown_timer:
@@ -351,6 +403,7 @@ class SessionGuard:
             pass
 
     def _final_destroy(self):
+        """Final teardown step scheduled by _execute_logout."""
         try:
             self.root.quit()
             self.root.destroy()
@@ -358,30 +411,29 @@ class SessionGuard:
             pass
 
     def _execute_logout(self, reason=None):
-        """The Unified Cleanup & Exit Function"""
+        """Unified cleanup and exit. Stops loops, cancels timers, and destroys the HUD."""
         if reason:
             try:
                 messagebox.showinfo("Session Ended", reason, parent=self.root)
             except:
                 pass
 
-        # 1. Stop the loops
+        # 1. Stop the HUD update loop and the camera monitor.
         self.is_running = False
 
-        # 2. Cancel the TKinter timers immediately
+        # 2. Cancel any pending Tk timers so they don't fire mid-teardown.
         if hasattr(self, '_hud_timer') and self._hud_timer:
             self.root.after_cancel(self._hud_timer)
         if hasattr(self, '_countdown_timer') and self._countdown_timer:
             self.root.after_cancel(self._countdown_timer)
 
-        # 3. Finalize State
+        # 3. Mark the exit status so the caller knows this was a logout.
         self.exit_status = "LOGOUT"
 
-        # 4. Thread-Safe UI Destruction with a tiny delay for the camera
-
-        # Wait 200ms before destroying the UI. This gives the background thread
-        # enough time to exit its loop and execute cap.release().
-        # Without this delay, the UI closes too fast, causing a race condition
-        # that triggers a "Tcl_AsyncDelete async handler deleted by the wrong thread " crash or locks up the webcam.
+        # 4. Destroy the UI after a brief delay. This gives the background
+        # thread time to exit its loop and call cap.release() before the
+        # main thread tears Tk down. Without this delay the UI can close
+        # too fast and trigger a "Tcl_AsyncDelete async handler deleted by
+        # the wrong thread" crash or a stuck webcam handle.
         if self.root:
             self.root.after(200, self._final_destroy)

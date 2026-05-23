@@ -4,28 +4,41 @@ from settings_window import SettingsWindow
 
 
 class RentWindow:
+    """
+    Fullscreen payment window shown when a user with a zero time balance
+    successfully passes face authentication. Allows the user to purchase
+    additional minutes (or open their account settings) before starting
+    the session.
+    """
+
     def __init__(self, network_client, username):
         self.net = network_client
         self.username = username
         self.added_time = 0
         self.root = None
-        self.price_per_min = 0.50  # CONFIG: $0.50 per minute
+        self.price_per_min = 0.50  # Rate in dollars per minute.
 
     def show(self, parent=None):
-        """Displays the window and returns the minutes added."""
-        # --- STRUCTURAL FIX: NEVER use tk.Tk() for a secondary window! ---
+        """
+        Displays the window and blocks until it is closed.
+        Returns the number of minutes the user successfully purchased
+        (0 if they cancelled or the transaction failed).
+        """
+        # Use Toplevel rather than Tk() so this window attaches to an
+        # existing Tk root — creating a second Tk() instance would crash
+        # the Tkinter event loop.
         if parent:
             self.root = tk.Toplevel(parent)
         else:
-            self.root = tk.Toplevel()  # Automatically attaches to the main running Tk()
+            self.root = tk.Toplevel()
 
-        self.root.grab_set()  # Focus stays on this window
+        self.root.grab_set()  # Modal: focus stays on this window.
 
         self.root.attributes('-fullscreen', True)
         self.root.attributes('-topmost', True)
         self.root.configure(bg="#2c3e50")
 
-        # --- RESTORED ORIGINAL LAYOUT ---
+        # All content is placed inside a centered frame.
         content_frame = tk.Frame(self.root, bg="#2c3e50")
         content_frame.place(relx=0.5, rely=0.5, anchor="center")
 
@@ -37,51 +50,54 @@ class RentWindow:
         tk.Label(content_frame, text=f"Rate: ${self.price_per_min:.2f} / min",
                  font=("Arial", 14, "italic"), bg="#2c3e50", fg="#bdc3c7").pack()
 
-        # Input Section
+        # Input section
         tk.Label(content_frame, text="How many minutes do you want?",
                  font=("Arial", 16), bg="#2c3e50", fg="#ecf0f1").pack(pady=(30, 10))
 
-        # Validation Setup
+        # Restrict entry to digits only via a Tk validation command.
         vcmd = (self.root.register(self.validate_number), '%P')
 
-        # Entry Box
         self.entry_mins = tk.Entry(content_frame, font=("Arial", 30), justify='center', width=8,
                                    validate='key', validatecommand=vcmd)
         self.entry_mins.pack(pady=10)
         self.entry_mins.bind("<KeyRelease>", self.update_price_display)
 
-        # Price Display
+        # Live-updating total price display.
         self.lbl_price = tk.Label(content_frame, text="Total: $0.00",
                                   font=("Arial", 28, "bold"), bg="#2c3e50", fg="#f1c40f")
         self.lbl_price.pack(pady=20)
 
-        # Payment Button
+        # Payment button
         tk.Button(content_frame, text="PAY & UNLOCK", font=("Arial", 18, "bold"),
                   bg="#27ae60", fg="white", width=20, command=self.process_payment).pack(pady=5)
 
-        # Settings Button
+        # Account settings shortcut so the user can update details (e.g.
+        # their face encoding) without first having to add time.
         tk.Button(content_frame, text="Account Settings", command=self.open_settings,
                   font=("Arial", 12), bg="#3498db", fg="white").pack(pady=10)
 
-        # Cancel Button
+        # Cancel — returns the user to the lock screen.
         tk.Button(content_frame, text="Cancel", command=self.close,
                   font=("Arial", 14), bg="#c0392b", fg="white").pack(pady=10)
 
         self.entry_mins.focus_set()
 
-        # --- STRUCTURAL FIX: Wait for the window to be destroyed ---
+        # Block until the window is destroyed (either by Pay or Cancel).
         self.root.wait_window()
 
-        # Once self.root.destroy() is called (in process_payment or close),
-        # the code resumes here and hands the time back to main_client!
+        # Execution resumes here once the window closes; return the
+        # purchased minutes to the caller.
         return self.added_time
 
     def open_settings(self):
+        """Hides this window and opens the settings window on top of it."""
         self.root.withdraw()
-        # Pass self.root as the parent so settings doesn't crash either
+        # Pass self.root as the parent so the settings window attaches
+        # to the same Tk root.
         settings = SettingsWindow(self.net, self.username, self.root, from_payment=True)
         updated_username = settings.show()
 
+        # If the user changed their username inside Settings, reflect it here.
         if updated_username:
             self.username = updated_username
             self.lbl_welcome.config(text=f"Hello, {self.username}")
@@ -91,10 +107,12 @@ class RentWindow:
         self.root.attributes('-topmost', True)
 
     def validate_number(self, new_text):
+        """Tk validation callback: allows only digits or an empty string."""
         if new_text == "": return True
         return new_text.isdigit()
 
     def update_price_display(self, event=None):
+        """Recalculates and displays the total cost whenever the input changes."""
         text = self.entry_mins.get()
         if not text:
             self.lbl_price.config(text="Total: $0.00")
@@ -107,6 +125,7 @@ class RentWindow:
             self.lbl_price.config(text="Total: $0.00")
 
     def process_payment(self):
+        """Confirms the charge with the user and submits the ADD_TIME request."""
         try:
             text = self.entry_mins.get()
             if not text: return
@@ -115,7 +134,8 @@ class RentWindow:
 
             cost = minutes * self.price_per_min
 
-            # --- POPUP FIX: parent=self.root ---
+            # Use parent=self.root so the dialog appears on top of the
+            # fullscreen rent window rather than behind it.
             confirm = messagebox.askyesno("Confirm Payment",
                                           f"Charge card ${cost:.2f} for {minutes} mins?",
                                           parent=self.root)
@@ -137,4 +157,5 @@ class RentWindow:
             pass
 
     def close(self):
+        """Closes the window without purchasing any time."""
         self.root.destroy()
