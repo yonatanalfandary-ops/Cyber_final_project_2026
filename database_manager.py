@@ -120,10 +120,10 @@ class DatabaseManager:
 
             conn.commit()
             conn.close()
-            print("✅ Database Schema Loaded.")
+            print("Database Schema Loaded.")
 
         except mysql.connector.Error as err:
-            print(f"❌ Database Init Error: {err}")
+            print(f"Database Init Error: {err}")
 
     @staticmethod
     def _hash_password(plain_text):
@@ -159,10 +159,10 @@ class DatabaseManager:
                         "UPDATE users SET password = %s WHERE username = %s",
                         (hashed, row['username'])
                     )
-                    print(f"🔐 Migrated plain-text password for '{row['username']}' to SHA-256.")
+                    print(f"Migrated plain-text password for '{row['username']}' to SHA-256.")
             conn.commit()
         except Exception as e:
-            print(f"❌ Password migration error: {e}")
+            print(f"Password migration error: {e}")
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
@@ -170,7 +170,7 @@ class DatabaseManager:
         """Guarantees that at least one root account exists, then runs the password migration."""
         users = self.get_all_users()
         if not any(u['role'] == 'root' for u in users):
-            print("⚠ No Root user found. Creating default 'admin'...")
+            print("No Root user found. Creating default 'admin'...")
             self.create_user("admin", "admin123", "System Administrator", "root")
         # Hash any plain-text passwords still present from before the migration was introduced.
         self._migrate_plain_passwords()
@@ -212,7 +212,7 @@ class DatabaseManager:
             stations = cursor.fetchall()
             return stations
         except Exception as e:
-            print(f"❌ Error fetching stations: {e}")
+            print(f"Error fetching stations: {e}")
             return []
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
@@ -253,7 +253,7 @@ class DatabaseManager:
             conn.close()
             return new_id
         except Exception as e:
-            print(f"❌ Gap Logic Error: {e}")
+            print(f"Gap Logic Error: {e}")
             return None
 
     def update_station_state(self, station_id, status, active_user=None):
@@ -308,9 +308,9 @@ class DatabaseManager:
             sql = "INSERT INTO user_audit (username, station_id, action) VALUES (%s, %s, %s)"
             cursor.execute(sql, (username, station_id, action))
             conn.commit()
-            print(f"📋 Audit: {username} {action} on {station_id}")
+            print(f"Audit: {username} {action} on {station_id}")
         except Exception as e:
-            print(f"❌ User Audit Log Error: {e}")
+            print(f"User Audit Log Error: {e}")
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
@@ -327,9 +327,9 @@ class DatabaseManager:
             sql = "INSERT INTO station_audit (station_id, status) VALUES (%s, %s)"
             cursor.execute(sql, (station_id, status))
             conn.commit()
-            print(f"📋 Audit: {station_id} went {status}")
+            print(f"Audit: {station_id} went {status}")
         except Exception as e:
-            print(f"❌ Station Audit Log Error: {e}")
+            print(f"Station Audit Log Error: {e}")
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
 
@@ -350,7 +350,7 @@ class DatabaseManager:
                     r['timestamp'] = r['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
             return rows
         except Exception as e:
-            print(f"❌ Fetch User Audit Error: {e}")
+            print(f"Fetch User Audit Error: {e}")
             return []
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
@@ -371,7 +371,7 @@ class DatabaseManager:
                     r['timestamp'] = r['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
             return rows
         except Exception as e:
-            print(f"❌ Fetch Station Audit Error: {e}")
+            print(f"Fetch Station Audit Error: {e}")
             return []
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
@@ -413,7 +413,7 @@ class DatabaseManager:
                 r['total_seconds'] = int(r['total_seconds'])
             return rows
         except Exception as e:
-            print(f"❌ Station Overview Error: {e}")
+            print(f"Station Overview Error: {e}")
             return []
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
@@ -454,7 +454,7 @@ class DatabaseManager:
                 r['total_seconds'] = int(r['total_seconds'])
             return rows
         except Exception as e:
-            print(f"❌ User Overview Error: {e}")
+            print(f"User Overview Error: {e}")
             return []
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
@@ -466,10 +466,10 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute("TRUNCATE TABLE user_audit")
             conn.commit()
-            print("🗑️  User audit log cleared.")
+            print("User audit log cleared.")
             return True
         except Exception as e:
-            print(f"❌ Clear User Audit Error: {e}")
+            print(f"Clear User Audit Error: {e}")
             return False
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
@@ -481,10 +481,10 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute("TRUNCATE TABLE station_audit")
             conn.commit()
-            print("🗑️  Station audit log cleared.")
+            print("Station audit log cleared.")
             return True
         except Exception as e:
-            print(f"❌ Clear Station Audit Error: {e}")
+            print(f"Clear Station Audit Error: {e}")
             return False
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
@@ -502,7 +502,7 @@ class DatabaseManager:
             row = cursor.fetchone()
             return row['setting_value'] if row else None
         except Exception as e:
-            print(f"❌ Get Setting Error: {e}")
+            print(f"Get Setting Error: {e}")
             return None
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
@@ -520,7 +520,7 @@ class DatabaseManager:
             conn.commit()
             return True
         except Exception as e:
-            print(f"❌ Set Setting Error: {e}")
+            print(f"Set Setting Error: {e}")
             return False
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
@@ -605,7 +605,7 @@ class DatabaseManager:
                 user['face_encoding'] = json.loads(user['face_encoding'])
             return user
         except Exception as e:
-            print(f"❌ get_user_by_username error: {e}")
+            print(f"get_user_by_username error: {e}")
             return None
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
@@ -645,7 +645,7 @@ class DatabaseManager:
             conn.commit()
             return True
         except Exception as e:
-            print(f"❌ Add Time Error: {e}")
+            print(f"Add Time Error: {e}")
             return False
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
@@ -661,7 +661,7 @@ class DatabaseManager:
             conn.commit()
             return True
         except Exception as e:
-            print(f"❌ Time Deduction Error: {e}")
+            print(f"Time Deduction Error: {e}")
             return False
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
@@ -678,7 +678,7 @@ class DatabaseManager:
             conn.commit()
             return True
         except Exception as e:
-            print(f"❌ Expire Session Error: {e}")
+            print(f"Expire Session Error: {e}")
             return False
         finally:
             if 'conn' in locals() and conn.is_connected(): conn.close()
@@ -716,7 +716,7 @@ class DatabaseManager:
             if field == 'role' and new_value == 'root':
                 zero_sql = "UPDATE users SET time_balance = 0 WHERE username = %s"
                 cursor.execute(zero_sql, (current_username,))
-                print(f"⚖️ Database: Wiped time_balance to 0 for promoted root user '{current_username}'")
+                print(f"Database: Wiped time_balance to 0 for promoted root user '{current_username}'")
 
             conn.commit()
 
@@ -741,7 +741,7 @@ class DatabaseManager:
             conn.close()
             return True
         except Exception as e:
-            print(f"❌ Update Face Error: {e}")
+            print(f"Update Face Error: {e}")
             return False
 
     def get_active_renters(self):

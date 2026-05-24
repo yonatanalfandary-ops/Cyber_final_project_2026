@@ -26,12 +26,12 @@ class RentalServer:
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.bind((SERVER_IP, SERVER_PORT))
         self.server_socket.listen(5)
-        print(f"✅ CENTRAL SERVER STARTED on {SERVER_IP}:{SERVER_PORT}")
+        print(f"CENTRAL SERVER STARTED on {SERVER_IP}:{SERVER_PORT}")
         print("Waiting for Stations to connect...")
 
     def handle_client(self, client_socket, addr):
         """Handles the full lifecycle of one connected station, from handshake to disconnect."""
-        print(f"🔗 Connection from: {addr}")
+        print(f"Connection from: {addr}")
         protocol = Protocol(client_socket, NoCrypter())
         # Declare up front so the 'finally' block can clean up even if we
         # never get as far as setting the station ID.
@@ -53,7 +53,7 @@ class RentalServer:
 
             handshake_reply = protocol.get_message()
             if not handshake_reply or handshake_reply.get("action") != "HANDSHAKE_SYM_KEY":
-                print(f"❌ Handshake failed with {addr}")
+                print(f"Handshake failed with {addr}")
                 client_socket.close()
                 return
 
@@ -61,7 +61,7 @@ class RentalServer:
             sym_key_bytes = asym_crypter.decrypt(encrypted_sym_key)
 
             protocol.crypter = SymmetricCrypter(key=sym_key_bytes)
-            print(f"🔐 Secure AES Encrypted Connection Established with {addr}")
+            print(f"Secure AES Encrypted Connection Established with {addr}")
             # --- End handshake ---
 
             # --- Station initialisation & security check ---
@@ -81,7 +81,7 @@ class RentalServer:
                 # Reject the connection if another client is already running
                 # under this station ID.
                 if station_id in self.active_stations:
-                    print(f"⛔ Denied Connection: Station {station_id} is already in use!")
+                    print(f"Denied Connection: Station {station_id} is already in use!")
                     protocol.create_and_send_message({"status": "ERROR_STATION_IN_USE"})
                     return
 
@@ -89,7 +89,7 @@ class RentalServer:
                 # the database while offline, instruct the client to wipe
                 # its local config and exit.
                 if not self.db.check_station_exists(station_id):
-                    print(f"⛔ Denied Connection to wiped station: {station_id}")
+                    print(f"Denied Connection to wiped station: {station_id}")
                     protocol.create_and_send_message({"action": "COMMAND_UNREGISTER"})
                     return
 
@@ -101,7 +101,7 @@ class RentalServer:
             # Mark the station as Online both in memory and in the database.
             self.active_stations[station_id] = protocol
             self.db.update_station_state(station_id, 'Online', None)
-            print(f"🖥️  {station_id} is Online.")
+            print(f"{station_id} is Online.")
 
             # Audit: record that this station came Online.
             self.db.log_station_status(station_id, 'Online')
@@ -112,7 +112,7 @@ class RentalServer:
                 if not request: break  # Client disconnected.
 
                 action = request.get("action")
-                print(f"📩 Action '{action}' from {station_id} ({addr})")
+                print(f"Action '{action}' from {station_id} ({addr})")
 
                 response = {"status": "ERROR", "message": "Unknown Action"}
 
@@ -128,7 +128,7 @@ class RentalServer:
                             # Standard users authenticate via Face ID only;
                             # they're never allowed to log in by password
                             # even if a password happens to match.
-                            print(f"⛔ Login Denied for {username}: Standard users must use Face ID.")
+                            print(f"Login Denied for {username}: Standard users must use Face ID.")
                             response = {
                                 "status": "DENIED",
                                 "message": "Standard users cannot use passwords. Please use Face ID."
@@ -145,7 +145,7 @@ class RentalServer:
                                     break
 
                             if is_duplicate:
-                                print(f"⛔ Login Blocked: Admin {requested_user} is already active on another station.")
+                                print(f"Login Blocked: Admin {requested_user} is already active on another station.")
                                 protocol.create_and_send_message({"status": "ERROR_USER_ALREADY_LOGGED_IN"})
                                 continue
 
@@ -165,7 +165,7 @@ class RentalServer:
                                 "time_balance": user['time_balance'],
                                 "face_encoding": user['face_encoding']
                             }
-                            print(f"✅ Admin '{username}' logged in at {station_id}")
+                            print(f"Admin '{username}' logged in at {station_id}")
                     else:
                         response = {"status": "FAIL", "message": "Invalid Username or Password"}
 
@@ -194,7 +194,7 @@ class RentalServer:
                                 break
 
                         if is_duplicate:
-                            print(f"⛔ Sync Blocked: User {active_username} is already active on another station.")
+                            print(f"Sync Blocked: User {active_username} is already active on another station.")
                             protocol.create_and_send_message({"status": "ERROR_USER_ALREADY_LOGGED_IN"})
                             continue
 
@@ -214,7 +214,7 @@ class RentalServer:
 
                     self.db.update_station_state(station_id, new_status, active_username)
                     response = {"status": "SUCCESS"}
-                    print(f"🔄 {station_id} State Synced: {new_status} | User: {active_username}")
+                    print(f"{station_id} State Synced: {new_status} | User: {active_username}")
 
                 # CASE 2: Register a new standard user (admin-only action).
                 elif action == "REGISTER_USER":
@@ -261,11 +261,11 @@ class RentalServer:
                         success = self.db.update_user_face(target_username, new_face_data)
                         if success:
                             response = {"status": "SUCCESS", "message": "Face Updated"}
-                            print(f"📸 Face updated for {target_username}")
+                            print(f"Face updated for {target_username}")
                         else:
                             response = {"status": "FAIL", "message": "Database Error"}
                     else:
-                        print(f"⛔ Denied face update for {target_username} (Unauthorized)")
+                        print(f"Denied face update for {target_username} (Unauthorized)")
                         response = {"status": "DENIED", "message": "Unauthorized or Bad Password"}
 
                 # CASE 4b: Update one field of a user's profile.
@@ -277,7 +277,7 @@ class RentalServer:
                     success, msg = self.db.update_user_field(username, field, value)
                     if success:
                         response = {"status": "SUCCESS", "message": "Profile Updated"}
-                        print(f"✅ Updated {field} for {username}")
+                        print(f"Updated {field} for {username}")
                     else:
                         response = {"status": "ERROR", "message": msg}
 
@@ -297,7 +297,7 @@ class RentalServer:
                 elif action == "EXPIRE_SESSION":
                     username = request.get("username")
                     self.db.expire_session(username)
-                    print(f"⏰ Session expired for '{username}'. Balance zeroed.")
+                    print(f"Session expired for '{username}'. Balance zeroed.")
                     response = {"status": "SUCCESS"}
 
                 # CASE 7: Add purchased minutes to a user's balance.
@@ -313,9 +313,9 @@ class RentalServer:
                         revenue_earned = float(minutes) * 0.5
                         if revenue_earned > 0:
                             self.db.add_station_revenue(station_id, revenue_earned)
-                            print(f"💰 Added {minutes} mins for {username} at {station_id}. Revenue: +${revenue_earned:.2f}")
+                            print(f"Added {minutes} mins for {username} at {station_id}. Revenue: +${revenue_earned:.2f}")
                         else:
-                            print(f"⚖️ Admin modified time for {username} by {minutes} mins. (Revenue unchanged)")
+                            print(f"Admin modified time for {username} by {minutes} mins. (Revenue unchanged)")
                         response = {"status": "SUCCESS"}
                     else:
                         response = {"status": "FAILURE"}
@@ -459,10 +459,10 @@ class RentalServer:
                 protocol.create_and_send_message(response)
 
         except Exception as e:
-            print(f"⚠ Connection Error {addr}: {e}")
+            print(f"Connection Error {addr}: {e}")
         finally:
             if station_id:
-                print(f"🔌 {station_id} Disconnected.")
+                print(f"{station_id} Disconnected.")
 
                 # Audit: if a user was still active when the socket dropped,
                 # log them out so the audit log remains balanced.

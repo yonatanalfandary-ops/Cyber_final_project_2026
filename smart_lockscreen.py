@@ -60,7 +60,7 @@ class SmartLockScreen:
 
     def _on_space(self, event):
         """Attempts to resume the session by verifying the user's face."""
-        print("📸 Resuming: Scanning face...")
+        print("Resuming: Scanning face...")
         # Pause the countdown while the camera is active.
         self.root.after_cancel(self.timer_id)
 
@@ -76,11 +76,11 @@ class SmartLockScreen:
         match = self.scanner.scan_specific_user(self.user)
 
         if match:
-            print("✅ Face Matched! Resuming session.")
+            print("Face Matched! Resuming session.")
             self.result = "RESUME"
             self.root.destroy()
         else:
-            print("🚫 Face match failed. Returning to Smart Lock.")
+            print("Face match failed. Returning to Smart Lock.")
             if not self.privacy_screen:
                 self.root.deiconify()
             self.root.focus_force()
@@ -89,13 +89,13 @@ class SmartLockScreen:
 
     def _on_timeout(self):
         """Called when the two-minute timer expires — forces a full logout."""
-        print("⏳ Smart Lock Timeout (2 mins). Logging out completely.")
+        print("Smart Lock Timeout (2 mins). Logging out completely.")
         self.result = "TIMEOUT"
         self.root.destroy()
 
     def _on_esc(self, event):
         """Developer-only emergency exit, bound to the Escape key."""
-        print("🛑 Emergency Exit Triggered.")
+        print("Emergency Exit Triggered.")
         self.result = "EXIT"
         self.root.after_cancel(self.timer_id)
         self.root.destroy()

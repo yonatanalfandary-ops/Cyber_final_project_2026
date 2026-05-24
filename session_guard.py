@@ -137,7 +137,7 @@ class SessionGuard:
         btn_frame = tk.Frame(self.root, bg="#1e1e1e")
         btn_frame.pack(pady=5)
 
-        tk.Button(btn_frame, text="⚙ Settings", command=self._open_settings,
+        tk.Button(btn_frame, text="Settings", command=self._open_settings,
                   bg="#34495e", fg="white", font=("Arial", 9)).pack(side="left", padx=5)
 
         tk.Button(btn_frame, text="Logout [Q]", command=self._logout,
@@ -250,7 +250,7 @@ class SessionGuard:
                     self.grace_start = time.time()
 
                 if time.time() - self.grace_start > 3:
-                    print("⏸️ User Left. Pausing Session...")
+                    print("User Left. Pausing Session...")
                     self.is_running = False
                     self.exit_status = "PAUSED"
 
@@ -300,7 +300,7 @@ class SessionGuard:
             overlay.destroy()
 
         self.is_paused = False
-        print("▶ Session Resumed")
+        print("Session Resumed")
 
     def _sync_balance_from_server(self):
         """Pulls the user's current balance from the server after a rent transaction."""
@@ -309,7 +309,7 @@ class SessionGuard:
             for u in response.get("users", []):
                 if u['username'] == self.user['username']:
                     self.balance_mins = float(u['time_balance'])
-                    print(f"🔄 Sync Success: New Balance {self.balance_mins} mins")
+                    print(f"Sync Success: New Balance {self.balance_mins} mins")
                     break
 
     def _open_settings(self, event=None):

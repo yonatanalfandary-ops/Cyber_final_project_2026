@@ -63,7 +63,7 @@ class BiometricScanner:
         cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
 
         # Open the webcam and begin the scan loop.
-        print(f"👀 Scanning for {len(active_users)} active users...")
+        print(f"Scanning for {len(active_users)} active users...")
         cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         start_time = time.time()
         found_user = None
@@ -146,7 +146,7 @@ class BiometricScanner:
         cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
 
         # Open the webcam and begin the verification loop.
-        print(f"🎯 Verifying face for: {target_user['username']}...")
+        print(f"Verifying face for: {target_user['username']}...")
         cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         start_time = time.time()
         matched = False

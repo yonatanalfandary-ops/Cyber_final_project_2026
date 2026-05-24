@@ -71,7 +71,7 @@ class LoginWindow:
             messagebox.showwarning("Input Error", "Please fill in all fields.")
             return
 
-        print(f"📡 Attempting login for {username}...")
+        print(f"Attempting login for {username}...")
         response = self.network.send_request("LOGIN", {
             "username": username,
             "password": password,
@@ -79,7 +79,7 @@ class LoginWindow:
         })
 
         if response and response.get("status") == "SUCCESS":
-            print("✅ Login Successful!")
+            print("Login Successful!")
             self.user_data = response
             self.root.destroy()
 
@@ -87,7 +87,7 @@ class LoginWindow:
         # returns a dedicated error code. Surface it as a clear message and
         # clear the password field so it can be re-entered safely.
         elif response and response.get("status") == "ERROR_USER_ALREADY_LOGGED_IN":
-            print("❌ Login Blocked: Admin already active elsewhere.")
+            print("Login Blocked: Admin already active elsewhere.")
             messagebox.showerror("Login Failed", "Login Blocked: Admin is already active elsewhere.")
             self.entry_pass.delete(0, tk.END)
 

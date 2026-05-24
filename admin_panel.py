@@ -74,7 +74,7 @@ class AdminPanel:
 
         # Privacy-screen toggle — its label is updated by _update_privacy_btn.
         self.btn_privacy = tk.Button(
-            top_bar, text="🔒 Privacy: OFF",
+            top_bar, text="Privacy: OFF",
             command=self._toggle_privacy_screen,
             font=("Arial", 12, "bold"), bg="#7f8c8d", fg="white", width=14
         )
@@ -145,7 +145,7 @@ class AdminPanel:
         actions_frame = tk.Frame(self.tab_stations_overview, bg="#2c3e50")
         actions_frame.pack(fill="x", pady=10)
 
-        tk.Button(actions_frame, text="❌ Delete Selected Station", command=self.delete_station,
+        tk.Button(actions_frame, text="Delete Selected Station", command=self.delete_station,
                   font=("Arial", 12, "bold"), bg="#c0392b", fg="white").pack(side="left", padx=10)
 
         cols = ("Station ID", "Status", "Current User")
@@ -180,25 +180,25 @@ class AdminPanel:
         tk.Label(right_frame, text="Management Actions", font=("Arial", 16, "bold"), bg="#2c3e50", fg="white").pack(
             pady=10)
 
-        self.btn_create = tk.Button(right_frame, text="➕ Create New User", command=self.create_user, font=("Arial", 12),
+        self.btn_create = tk.Button(right_frame, text="Create New User", command=self.create_user, font=("Arial", 12),
                                     bg="#27ae60", fg="white", width=30)
         self.btn_create.pack(pady=8)
 
-        self.btn_delete = tk.Button(right_frame, text="❌ Delete Selected", command=self.delete_user, font=("Arial", 12),
+        self.btn_delete = tk.Button(right_frame, text="Delete Selected", command=self.delete_user, font=("Arial", 12),
                                     bg="#c0392b", fg="white", width=30)
         self.btn_delete.pack(pady=8)
 
         tk.Label(right_frame, text="--- Edit Selected ---", bg="#2c3e50", fg="#95a5a6").pack(pady=15)
 
-        self.btn_time = tk.Button(right_frame, text="⏳ Add/Remove Time", command=self.manage_time, font=("Arial", 12),
+        self.btn_time = tk.Button(right_frame, text="Add/Remove Time", command=self.manage_time, font=("Arial", 12),
                                   bg="#2980b9", fg="white", width=30)
         self.btn_time.pack(pady=8)
 
-        self.btn_face = tk.Button(right_frame, text="📸 Recapture Face ID", command=self.recapture_face,
+        self.btn_face = tk.Button(right_frame, text="Recapture Face ID", command=self.recapture_face,
                                   font=("Arial", 12), bg="#e67e22", fg="white", width=30)
         self.btn_face.pack(pady=8)
 
-        self.btn_edit_profile = tk.Button(right_frame, text="📝 Edit Details", command=self.edit_details,
+        self.btn_edit_profile = tk.Button(right_frame, text="Edit Details", command=self.edit_details,
                                           font=("Arial", 12), bg="#8e44ad", fg="white", width=30)
         self.btn_edit_profile.pack(pady=8)
 
@@ -215,30 +215,30 @@ class AdminPanel:
         # Three mutually exclusive toggle buttons. The active one renders
         # sunken/blue; the inactive ones render raised/grey.
         self._btn_user_audit = tk.Button(
-            control_frame, text="👥 User Audit",
+            control_frame, text="User Audit",
             command=self._switch_to_user_audit,
             font=("Arial", 12, "bold"), width=14,
             bg="#2980b9", fg="white", relief="sunken")   # Starts active.
         self._btn_user_audit.pack(side="left", padx=5)
 
         self._btn_station_overview = tk.Button(
-            control_frame, text="🖥️ Station Overview",
+            control_frame, text="Station Overview",
             command=self._switch_to_station_overview,
             font=("Arial", 12, "bold"), width=18,
             bg="#34495e", fg="white", relief="raised")
         self._btn_station_overview.pack(side="left", padx=5)
 
         self._btn_user_overview = tk.Button(
-            control_frame, text="👤 User Overview",
+            control_frame, text="User Overview",
             command=self._switch_to_user_overview,
             font=("Arial", 12, "bold"), width=15,
             bg="#34495e", fg="white", relief="raised")
         self._btn_user_overview.pack(side="left", padx=5)
 
-        tk.Button(control_frame, text="🔄 Refresh", command=self._refresh_audit,
+        tk.Button(control_frame, text="Refresh", command=self._refresh_audit,
                   font=("Arial", 12), bg="#27ae60", fg="white", width=10).pack(side="left", padx=20)
 
-        tk.Button(control_frame, text="🗑️ Clear History", command=self._clear_audit,
+        tk.Button(control_frame, text="Clear History", command=self._clear_audit,
                   font=("Arial", 12), bg="#c0392b", fg="white", width=14).pack(side="left", padx=5)
 
         self.lbl_audit_status = tk.Label(control_frame, text="", font=("Arial", 11, "italic"),
@@ -461,9 +461,9 @@ class AdminPanel:
     def _update_privacy_btn(self):
         """Refreshes the privacy toggle button's text and colour to match current state."""
         if self.privacy_screen_on:
-            self.btn_privacy.config(text="🔒 Privacy: ON",  bg="#27ae60")
+            self.btn_privacy.config(text="Privacy: ON",  bg="#27ae60")
         else:
-            self.btn_privacy.config(text="🔒 Privacy: OFF", bg="#7f8c8d")
+            self.btn_privacy.config(text="Privacy: OFF", bg="#7f8c8d")
 
     # ==========================================
     # DASHBOARD LOGIC (REAL-TIME POLLING)
@@ -575,7 +575,7 @@ class AdminPanel:
         # If the admin changed their own username inside Settings, reflect it in the header.
         if new_username and new_username != self.admin_username:
             self.admin_username = new_username
-            self.lbl_title.config(text=f"🔧 ADMIN PANEL | {self.admin_username}")
+            self.lbl_title.config(text=f"ADMIN PANEL | {self.admin_username}")
         self.root.attributes('-topmost', True)
 
     def restore_topmost(self, event):
@@ -901,10 +901,10 @@ class AdminPanel:
             })
 
             if response and response.get("status") == "SUCCESS":
-                messagebox.showinfo("Success", f"✅ Face ID updated for {user['username']}", parent=self.root)
+                messagebox.showinfo("Success", f"Face ID updated for {user['username']}", parent=self.root)
             else:
                 error_msg = response.get("message", "Unknown Error") if response else "No Server Response"
-                messagebox.showerror("Failed", f"❌ Update Denied.\nReason: {error_msg}", parent=self.root)
+                messagebox.showerror("Failed", f"Update Denied.\nReason: {error_msg}", parent=self.root)
 
     def validate_time_input(self, P):
         """Tk validator allowing empty, lone '-', or integer strings only."""

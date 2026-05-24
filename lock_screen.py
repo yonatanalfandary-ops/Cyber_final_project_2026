@@ -130,7 +130,7 @@ class LockScreen:
 
     def _emergency_exit(self, event=None):
         """Force-kills the process. Bound to Escape for developer use only."""
-        print("⚠ EMERGENCY EXIT")
+        print("EMERGENCY EXIT")
         os._exit(0)
 
     def blank(self):

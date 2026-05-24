@@ -29,7 +29,7 @@ class NetworkClient:
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.connect((self.server_ip, self.server_port))
-            print(f"✅ Connected to Server at {self.server_ip}:{self.server_port}")
+            print(f"Connected to Server at {self.server_ip}:{self.server_port}")
 
             # Begin handshake in plaintext mode so the public key can be received.
             self.protocol = Protocol(self.sock, NoCrypter())
@@ -37,7 +37,7 @@ class NetworkClient:
             # Step 1: wait for the server to send its RSA public key.
             msg = self.protocol.get_message()
             if not msg or msg.get("action") != "HANDSHAKE_PUB_KEY":
-                print("❌ Encryption Handshake failed: Did not receive Public Key.")
+                print("Encryption Handshake failed: Did not receive Public Key.")
                 return False
 
             # The key is transmitted as a hex string; convert it back to raw bytes.
@@ -62,11 +62,11 @@ class NetworkClient:
             # Step 6: swap the crypter on the protocol to the symmetric one so
             # all subsequent messages are sent over the secure channel.
             self.protocol.crypter = sym_crypter
-            print("🔐 Secure AES Encrypted Connection Established!")
+            print("Secure AES Encrypted Connection Established!")
             return True
 
         except Exception as e:
-            print(f"❌ Connection Failed: {e}")
+            print(f"Connection Failed: {e}")
             return False
 
     def send_request(self, action, data=None):
@@ -89,7 +89,7 @@ class NetworkClient:
             # Kill-switch intercept: if the server tells us to unregister, wipe
             # the local station configuration and terminate the process.
             if response and response.get("action") == "COMMAND_UNREGISTER":
-                print("💀 KILL SWITCH RECEIVED. Remote wipe triggered.")
+                print("KILL SWITCH RECEIVED. Remote wipe triggered.")
                 config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'station_config.json')
                 if os.path.exists(config_path):
                     try:

@@ -1,16 +1,10 @@
-import cv2
-import numpy as np
-import time
 import os
 import sys
 import json
-import face_recognition
 from network_client import NetworkClient
 from lock_screen import LockScreen
 from login_window import LoginWindow
 from rent_window import RentWindow
-import tkinter as tk
-from settings_window import SettingsWindow
 from admin_panel import AdminPanel
 from biometric_scanner import BiometricScanner
 from session_guard import SessionGuard
@@ -85,10 +79,10 @@ class MainClient:
                 json.dump({"station_id": self.station_id}, f)
 
         if not self.station_id:
-            print("❌ Failed to initialize Station ID.")
+            print("Failed to initialize Station ID.")
             sys.exit()
 
-        print(f"🖥️ Station Initialized as: {self.station_id}")
+        print(f"Station Initialized as: {self.station_id}")
 
     def run(self):
         """Main state-machine loop. Cycles between lock screen and active session."""
@@ -112,7 +106,7 @@ class MainClient:
                         status = guard.start()
 
                         if status == "PAUSED":
-                            print(f"⏸️ Session paused for {self.current_user['username']}. Updating server...")
+                            print(f"Session paused for {self.current_user['username']}. Updating server...")
 
                             # Notify the server that the station is in the Paused state.
                             self.net.send_request("SYNC_STATE", {
@@ -125,7 +119,7 @@ class MainClient:
                             lock_result = smart_lock.show()
 
                             if lock_result == "RESUME":
-                                print(f"▶️ Session resumed for {self.current_user['username']}. Updating server...")
+                                print(f"Session resumed for {self.current_user['username']}. Updating server...")
 
                                 # Notify the server that the station is back In Use.
                                 self.net.send_request("SYNC_STATE", {
@@ -172,7 +166,7 @@ class MainClient:
           4. On a successful scan, either start the session (if they have
              balance or are an admin) or open the rent window first.
         """
-        print(f"🔍 Checking database for user: {username}...")
+        print(f"Checking database for user: {username}...")
         response = self.net.send_request("FETCH_USER", {"username": username})
         target_user = None
 
@@ -180,21 +174,21 @@ class MainClient:
             target_user = response.get("user")
 
         if not target_user:
-            print("❌ Username not found.")
+            print("Username not found.")
             self.locker.reset_to_start("Username not found")
             return
 
         if not target_user.get('face_encoding'):
             if target_user.get('role') == 'root':
-                print("🛡️ Root without face ID. Routing instantly to manual login.")
+                print("Root without face ID. Routing instantly to manual login.")
                 self.locker.reset_to_start("")
                 self._trigger_manual_login()
             else:
-                print("⚠️ Standard user has no face ID. Blocking access.")
+                print("Standard user has no face ID. Blocking access.")
                 self.locker.reset_to_start("No Face ID setup. Please see Admin.")
             return
 
-        print("📸 Face ID found. Starting targeted scan...")
+        print("Face ID found. Starting targeted scan...")
         privacy = self._fetch_privacy_setting()
         if privacy:
             # Privacy mode: hide the lock-screen contents but keep the black
@@ -205,7 +199,7 @@ class MainClient:
         match = self.scanner.scan_specific_user(target_user)
 
         if match:
-            print("✅ Face Matched!")
+            print("Face Matched!")
             balance = float(target_user.get('time_balance', 0))
 
             if target_user['role'] == 'root' or balance > 0:
@@ -218,7 +212,7 @@ class MainClient:
                 # If the same user is already logged in on another station,
                 # block this login and return to the lock screen.
                 if resp and resp.get("status") == "ERROR_USER_ALREADY_LOGGED_IN":
-                    print("❌ Login Blocked: User already active elsewhere.")
+                    print("Login Blocked: User already active elsewhere.")
                     from tkinter import messagebox
                     self.locker.root.after(0, lambda: messagebox.showerror("Login Failed",
                                                                            "User is already logged in on another station.",
@@ -231,7 +225,7 @@ class MainClient:
                 self.locker.unlock()
             else:
                 # The user has no remaining balance; open the rent window.
-                print("💰 Balance is 0. Opening Rent Window...")
+                print("Balance is 0. Opening Rent Window...")
                 renter = RentWindow(self.net, target_user['username'])
 
                 raw_minutes = renter.show()
@@ -241,7 +235,7 @@ class MainClient:
                     minutes_added = 0
 
                 if minutes_added > 0:
-                    print(f"✅ Rent successful! Adding {minutes_added} mins to session.")
+                    print(f"Rent successful! Adding {minutes_added} mins to session.")
 
                     # Notify the server now that the user has paid and the
                     # session is about to begin.
@@ -252,7 +246,7 @@ class MainClient:
 
                     # Duplicate-login check after the rent transaction.
                     if resp and resp.get("status") == "ERROR_USER_ALREADY_LOGGED_IN":
-                        print("❌ Login Blocked: User already active elsewhere.")
+                        print("Login Blocked: User already active elsewhere.")
                         from tkinter import messagebox
                         self.locker.root.after(0, lambda: messagebox.showerror("Login Failed",
                                                                                "User is already logged in on another station.",
@@ -265,14 +259,14 @@ class MainClient:
                     self.current_user = target_user
                     self.locker.unlock()
                 else:
-                    print("❌ Payment cancelled. Returning to Lock Screen.")
+                    print("Payment cancelled. Returning to Lock Screen.")
                     if privacy:
                         self.locker.unblank()
                     else:
                         self.locker.root.deiconify()
                     self.locker.reset_to_start()
         else:
-            print("🚫 Face match failed. Access Denied.")
+            print("Face match failed. Access Denied.")
             if privacy:
                 self.locker.unblank()
             else:
@@ -281,7 +275,7 @@ class MainClient:
             if target_user.get('role') == 'root':
                 # Admin face scan failed — fall back to manual password
                 # login rather than sending them back to the lock screen.
-                print("🔑 Admin detected — routing to manual login.")
+                print("Admin detected — routing to manual login.")
                 self.locker.reset_to_start("")
                 self._trigger_manual_login()
             else:
@@ -301,7 +295,7 @@ class MainClient:
             role = user_data.get('role')
 
             if role == 'root':
-                print(f"✅ Root {user_data['username']} authenticated manually.")
+                print(f"Root {user_data['username']} authenticated manually.")
 
                 # Notify the server that a manual admin login succeeded.
                 resp = self.net.send_request("SYNC_STATE", {
@@ -311,7 +305,7 @@ class MainClient:
 
                 # Duplicate-login check for manual admin login.
                 if resp and resp.get("status") == "ERROR_USER_ALREADY_LOGGED_IN":
-                    print("❌ Login Blocked: already active elsewhere.")
+                    print("Login Blocked: already active elsewhere.")
                     from tkinter import messagebox
                     if self.locker and self.locker.root:
                         self.locker.root.after(0, lambda: messagebox.showerror("Login Failed", "User is already logged in on another station.", parent=self.locker.root))
@@ -324,7 +318,7 @@ class MainClient:
                 # Defensive guard: standard users should never reach the
                 # manual login window in the first place, but in case they
                 # do, reject the attempt with a clear message.
-                print("❌ Access Denied: Standard users cannot use manual login.")
+                print("Access Denied: Standard users cannot use manual login.")
                 if self.locker and self.locker.root:
                     self.locker.root.deiconify()
                     self.locker.reset_to_start("Users must use Face ID.")

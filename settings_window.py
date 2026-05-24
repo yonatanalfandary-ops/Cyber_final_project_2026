@@ -69,7 +69,7 @@ class SettingsWindow:
 
     def send_update(self, field, value):
         """Generic helper that sends an UPDATE_PROFILE request for one field."""
-        print(f"📝 Updating {field}...")
+        print(f"Updating {field}...")
         response = self.net.send_request("UPDATE_PROFILE", {
             "username": self.username,
             "field": field,
