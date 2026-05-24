@@ -413,10 +413,32 @@ class SessionGuard:
     def _execute_logout(self, reason=None):
         """Unified cleanup and exit. Stops loops, cancels timers, and destroys the HUD."""
         if reason:
+            # If privacy mode is on, place a fullscreen black overlay
+            # behind the dialog so the desktop isn't exposed while the
+            # session-ended notification is visible. Mirrors the same
+            # pattern used by _check_low_time.
+            overlay = None
+            if self._fetch_privacy_setting():
+                try:
+                    overlay = tk.Toplevel(self.root)
+                    overlay.attributes('-fullscreen', True)
+                    overlay.attributes('-topmost', True)
+                    overlay.configure(bg='black')
+                    overlay.update()
+                except:
+                    overlay = None
+
+            dialog_parent = overlay if overlay else self.root
             try:
-                messagebox.showinfo("Session Ended", reason, parent=self.root)
+                messagebox.showinfo("Session Ended", reason, parent=dialog_parent)
             except:
                 pass
+
+            if overlay:
+                try:
+                    overlay.destroy()
+                except:
+                    pass
 
         # 1. Stop the HUD update loop and the camera monitor.
         self.is_running = False
