@@ -29,7 +29,7 @@ class LockScreen:
             self.root,
             text="Press SPACE to Start Session",
             font=("Arial", 20),
-            fg="#555555",
+            fg="#ffffff",
             bg="black"
         )
         self.lbl_msg.pack(expand=True)
@@ -126,7 +126,7 @@ class LockScreen:
     def _reset_text(self):
         """Restores the idle status text after an error message has been displayed."""
         if self.root and self.root.winfo_exists():
-            self.lbl_msg.config(text="Press SPACE to Start Session", fg="#555555")
+            self.lbl_msg.config(text="Press SPACE to Start Session", fg="#ffffff")
 
     def _emergency_exit(self, event=None):
         """Force-kills the process. Bound to Escape for developer use only."""
@@ -151,7 +151,7 @@ class LockScreen:
         self.username_var.set('')
         self.entry_user.config(state='normal')
         self.btn_submit.config(state='normal')
-        self.lbl_msg.config(text='Press SPACE to Start Session', fg='#555555')
+        self.lbl_msg.config(text='Press SPACE to Start Session', fg='#ffffff')
         self.lbl_msg.pack(expand=True)
         self.root.configure(cursor='none')
         # Re-enable the wake bindings.

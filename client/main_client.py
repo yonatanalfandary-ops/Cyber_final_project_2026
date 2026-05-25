@@ -1,6 +1,8 @@
 import os
 import sys
 import json
+import tkinter as tk
+from tkinter import messagebox
 from client.network_client import NetworkClient
 from client.lock_screen import LockScreen
 from client.login_window import LoginWindow
@@ -11,9 +13,15 @@ from client.session_guard import SessionGuard
 from client.smart_lockscreen import SmartLockScreen
 
 # --- Configuration ---
-SERVER_IP = "172.16.63.55" #"10.0.0.24"
+# Fallback used only on the very first run, before the IP prompt has anything saved to pre-fill with.
+DEFAULT_SERVER_IP = "10.0.0.24"
 SYNC_INTERVAL = 5
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'station_config.json')
+# station_config.json lives at the project root (next to client/, server/, shared/),
+# not inside client/. Walking up one directory from this file's location reaches the root.
+CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'station_config.json'
+)
 
 
 class MainClient:
@@ -25,8 +33,35 @@ class MainClient:
 
     def __init__(self):
         self.station_id = None
-        self.net = NetworkClient(SERVER_IP)
-        if not self.net.connect(): sys.exit()
+
+        # Prompt for the server IP, pre-filled with the last working one.
+        # Loop on connection failure so the user can correct a typo without
+        # having to restart the program.
+        last_ip = self._load_last_ip()
+
+        while True:
+            server_ip = self._prompt_for_server_ip(last_ip)
+            if not server_ip:
+                # User cancelled the prompt — exit cleanly.
+                sys.exit()
+
+            self.net = NetworkClient(server_ip)
+            if self.net.connect():
+                # Connection succeeded — persist this IP so it pre-fills next time.
+                self._save_last_ip(server_ip)
+                break
+
+            # Connection failed — surface the error in a Tk popup and re-prompt
+            # with whatever IP they just tried already in the field.
+            err_root = tk.Tk()
+            err_root.withdraw()
+            messagebox.showerror(
+                "Connection Failed",
+                f"Could not connect to server at {server_ip}.\n"
+                "Please check the IP address and try again."
+            )
+            err_root.destroy()
+            last_ip = server_ip
 
         self._init_station()
 
@@ -53,8 +88,6 @@ class MainClient:
         # server rejects the connection. Surface a clear error and exit so
         # both clients aren't talking to the same server slot at once.
         if resp and resp.get("status") == "ERROR_STATION_IN_USE":
-            import tkinter as tk
-            from tkinter import messagebox
             temp_root = tk.Tk()
             temp_root.withdraw()
 
@@ -73,10 +106,19 @@ class MainClient:
             sys.exit(0)
 
         # If the server allocated a new ID for us, persist it for next run.
+        # Load existing config first so we don't overwrite other fields (like last_ip).
         if resp and resp.get("status") == "SUCCESS" and resp.get("new_id"):
             self.station_id = resp.get("new_id")
+            existing_config = {}
+            try:
+                if os.path.exists(CONFIG_PATH):
+                    with open(CONFIG_PATH, 'r') as f:
+                        existing_config = json.load(f)
+            except Exception:
+                existing_config = {}
+            existing_config["station_id"] = self.station_id
             with open(CONFIG_PATH, 'w') as f:
-                json.dump({"station_id": self.station_id}, f)
+                json.dump(existing_config, f)
 
         if not self.station_id:
             print("Failed to initialize Station ID.")
@@ -154,6 +196,95 @@ class MainClient:
             pass
         return False
 
+    def _load_last_ip(self):
+        """Returns the last-used server IP from the config file, or the default if none is stored."""
+        try:
+            if os.path.exists(CONFIG_PATH):
+                with open(CONFIG_PATH, 'r') as f:
+                    config = json.load(f)
+                    return config.get("last_ip", DEFAULT_SERVER_IP)
+        except Exception:
+            pass
+        return DEFAULT_SERVER_IP
+
+    def _save_last_ip(self, ip):
+        """Persists the given IP to the config file without disturbing other fields (e.g. station_id)."""
+        config = {}
+        try:
+            if os.path.exists(CONFIG_PATH):
+                with open(CONFIG_PATH, 'r') as f:
+                    config = json.load(f)
+        except Exception:
+            config = {}
+
+        config["last_ip"] = ip
+
+        try:
+            with open(CONFIG_PATH, 'w') as f:
+                json.dump(config, f)
+        except Exception as e:
+            print(f"Warning: could not save IP to config: {e}")
+
+    def _prompt_for_server_ip(self, default_ip):
+        """
+        Displays a small Tk dialog asking the user for the server IP. The field is
+        pre-filled with default_ip so the user can usually just press Enter to accept.
+        Returns the entered IP string, or None if the user cancelled.
+        """
+
+        result = {"ip": None}
+
+        root = tk.Tk()
+        root.title("Server Connection")
+        root.configure(bg="#2c3e50")
+
+        # Center the dialog on the screen.
+        width, height = 420, 220
+        screen_w = root.winfo_screenwidth()
+        screen_h = root.winfo_screenheight()
+        x = (screen_w - width) // 2
+        y = (screen_h - height) // 2
+        root.geometry(f"{width}x{height}+{x}+{y}")
+        root.attributes('-topmost', True)
+        root.resizable(False, False)
+
+        tk.Label(root, text="Enter Server IP Address:", font=("Arial", 14, "bold"),
+                 bg="#2c3e50", fg="white").pack(pady=(25, 10))
+
+        ip_var = tk.StringVar(value=default_ip)
+        entry = tk.Entry(root, textvariable=ip_var, font=("Arial", 14),
+                         width=20, justify='center')
+        entry.pack(pady=5)
+        entry.focus_set()
+        entry.select_range(0, tk.END)
+
+        def on_ok(event=None):
+            ip = ip_var.get().strip()
+            if ip:
+                result["ip"] = ip
+                root.destroy()
+
+        def on_cancel(event=None):
+            root.destroy()
+
+        btn_frame = tk.Frame(root, bg="#2c3e50")
+        btn_frame.pack(pady=20)
+
+        tk.Button(btn_frame, text="Connect", command=on_ok,
+                  font=("Arial", 12, "bold"), bg="#27ae60", fg="white",
+                  width=12).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Cancel", command=on_cancel,
+                  font=("Arial", 12), bg="#c0392b", fg="white",
+                  width=12).pack(side="left", padx=5)
+
+        # Convenience bindings: Enter to confirm, Escape or window-close to cancel.
+        root.bind('<Return>', on_ok)
+        root.bind('<Escape>', on_cancel)
+        root.protocol("WM_DELETE_WINDOW", on_cancel)
+
+        root.mainloop()
+        return result["ip"]
+
     def process_login(self, username):
         """
         Handles a username submitted from the lock screen.
@@ -213,7 +344,6 @@ class MainClient:
                 # block this login and return to the lock screen.
                 if resp and resp.get("status") == "ERROR_USER_ALREADY_LOGGED_IN":
                     print("Login Blocked: User already active elsewhere.")
-                    from tkinter import messagebox
                     self.locker.root.after(0, lambda: messagebox.showerror("Login Failed",
                                                                            "User is already logged in on another station.",
                                                                            parent=self.locker.root))
@@ -247,7 +377,6 @@ class MainClient:
                     # Duplicate-login check after the rent transaction.
                     if resp and resp.get("status") == "ERROR_USER_ALREADY_LOGGED_IN":
                         print("Login Blocked: User already active elsewhere.")
-                        from tkinter import messagebox
                         self.locker.root.after(0, lambda: messagebox.showerror("Login Failed",
                                                                                "User is already logged in on another station.",
                                                                                parent=self.locker.root))
@@ -306,7 +435,6 @@ class MainClient:
                 # Duplicate-login check for manual admin login.
                 if resp and resp.get("status") == "ERROR_USER_ALREADY_LOGGED_IN":
                     print("Login Blocked: already active elsewhere.")
-                    from tkinter import messagebox
                     if self.locker and self.locker.root:
                         self.locker.root.after(0, lambda: messagebox.showerror("Login Failed", "User is already logged in on another station.", parent=self.locker.root))
                         self.locker.root.deiconify()

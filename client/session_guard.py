@@ -131,7 +131,7 @@ class SessionGuard:
         self.lbl_time.bind("<B1-Motion>", _do_drag)
 
         tk.Label(self.root, text="⋮⋮ DRAG TO REPOSITION ⋮⋮", font=("Arial", 7),
-                 bg="#1e1e1e", fg="#444444").pack()
+                 bg="#1e1e1e", fg="#ffffff").pack()
 
         # Action buttons
         btn_frame = tk.Frame(self.root, bg="#1e1e1e")

@@ -90,7 +90,12 @@ class NetworkClient:
             # the local station configuration and terminate the process.
             if response and response.get("action") == "COMMAND_UNREGISTER":
                 print("KILL SWITCH RECEIVED. Remote wipe triggered.")
-                config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'station_config.json')
+                # station_config.json lives at the project root (one level up from
+                # the directory containing this file, which is inside client/).
+                config_path = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    'station_config.json'
+                )
                 if os.path.exists(config_path):
                     try:
                         os.remove(config_path)
