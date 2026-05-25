@@ -1,17 +1,17 @@
 import os
 import sys
 import json
-from network_client import NetworkClient
-from lock_screen import LockScreen
-from login_window import LoginWindow
-from rent_window import RentWindow
-from admin_panel import AdminPanel
-from biometric_scanner import BiometricScanner
-from session_guard import SessionGuard
-from smart_lockscreen import SmartLockScreen
+from client.network_client import NetworkClient
+from client.lock_screen import LockScreen
+from client.login_window import LoginWindow
+from client.rent_window import RentWindow
+from client.admin_panel import AdminPanel
+from client.biometric_scanner import BiometricScanner
+from client.session_guard import SessionGuard
+from client.smart_lockscreen import SmartLockScreen
 
 # --- Configuration ---
-SERVER_IP = "10.0.0.24"  # "172.16.63.55"
+SERVER_IP = "172.16.63.55" #"10.0.0.24"
 SYNC_INTERVAL = 5
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'station_config.json')
 

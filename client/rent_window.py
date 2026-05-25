@@ -1,7 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox
-from settings_window import SettingsWindow
-
+from client.settings_window import SettingsWindow
 
 class RentWindow:
     """

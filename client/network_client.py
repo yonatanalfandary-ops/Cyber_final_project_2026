@@ -1,8 +1,8 @@
 import socket
 import os
 import sys
-from NetworkProtocol import Protocol
-from Crypters import NoCrypter, AsymmetricCrypter, SymmetricCrypter
+from shared.NetworkProtocol import Protocol
+from shared.Crypters import NoCrypter, AsymmetricCrypter, SymmetricCrypter
 
 
 class NetworkClient:

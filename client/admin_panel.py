@@ -2,8 +2,7 @@ import tkinter as tk
 from tkinter import ttk, simpledialog, messagebox
 import cv2
 import face_recognition
-from settings_window import SettingsWindow
-
+from client.settings_window import SettingsWindow
 
 class AdminPanel:
     """

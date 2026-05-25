@@ -1,8 +1,8 @@
 import socket
 import threading
-from database_manager import DatabaseManager
-from NetworkProtocol import Protocol
-from Crypters import NoCrypter, AsymmetricCrypter, SymmetricCrypter
+from server.database_manager import DatabaseManager
+from shared.NetworkProtocol import Protocol
+from shared.Crypters import NoCrypter, AsymmetricCrypter, SymmetricCrypter
 
 # --- Configuration ---
 SERVER_IP = "0.0.0.0"

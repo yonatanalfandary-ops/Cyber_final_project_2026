@@ -5,8 +5,8 @@ import face_recognition
 import tkinter as tk
 from threading import Thread
 from tkinter import messagebox
-from settings_window import SettingsWindow
-from rent_window import RentWindow
+from client.settings_window import SettingsWindow
+from client.rent_window import RentWindow
 
 
 class SessionGuard:
