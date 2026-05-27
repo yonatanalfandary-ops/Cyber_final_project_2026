@@ -4,6 +4,12 @@ from mysql.connector import errorcode
 import json
 import uuid
 from datetime import datetime
+import configparser
+import os
+
+# Read credentials from config.ini at the project root
+_cfg = configparser.ConfigParser()
+_cfg.read(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.ini'))
 
 
 class DatabaseManager:
@@ -17,13 +23,13 @@ class DatabaseManager:
     block, so callers do not need to manage connection lifetimes.
     """
 
-    def __init__(self, host="localhost", user="root", password="BatTrot1!", database="rental_system"):
+    def __init__(self):
         self.config = {
-            "host": host,
-            "user": user,
-            "password": password,
+            "host": _cfg['database']['host'],
+            "user": _cfg['database']['user'],
+            "password": _cfg['database']['password'],
         }
-        self.db_name = database
+        self.db_name = _cfg['database']['database']
         self.init_database()
         self.ensure_root_exists()
 
