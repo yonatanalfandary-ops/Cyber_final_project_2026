@@ -12,7 +12,7 @@ class NetworkClient:
     client application.
     """
 
-    def __init__(self, server_ip="10.0.0.24", server_port=5000):
+    def __init__(self, server_ip, server_port=5000):
         self.server_ip = server_ip
         self.server_port = server_port
         self.sock = None
